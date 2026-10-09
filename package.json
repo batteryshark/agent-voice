@@ -1,0 +1,45 @@
+{
+  "name": "agent-voice",
+  "version": "0.1.0",
+  "description": "Hands-free voice conversation for Pi (TUI, PiChamber) and opencode 2.x (TUI, OpenChamber).",
+  "type": "module",
+  "private": true,
+  "keywords": [
+    "pi-package",
+    "opencode-plugin"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/batteryshark/agent-voice.git"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "exports": {
+    "./server": "./server.js"
+  },
+  "files": [
+    "index.ts",
+    "server.js",
+    "opencode.mjs",
+    "engine.mjs",
+    "voice.mjs",
+    "speech.mjs"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  }
+}
