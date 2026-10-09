@@ -167,3 +167,7 @@ npm test
 | `engine.mjs` | Host-agnostic voice loop, settings, one-mic-per-process ownership |
 | `index.ts` | Pi extension |
 | `opencode.mjs` / `server.js` | opencode 2.x plugin; `server.js` is the entry opencode resolves |
+
+## License
+
+MIT. See [LICENSE](LICENSE).

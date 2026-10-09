@@ -2,6 +2,7 @@
   "name": "agent-voice",
   "version": "0.1.0",
   "description": "Hands-free voice conversation for Pi (TUI, PiChamber) and opencode 2.x (TUI, OpenChamber).",
+  "license": "MIT",
   "type": "module",
   "private": true,
   "keywords": [
