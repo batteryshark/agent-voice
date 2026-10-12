@@ -178,6 +178,9 @@ The panel has **Interrupt reply** and **Test speaker interruption** controls, pl
 While voice is on, **Mute mic** stops sending your audio (for example while you talk to someone else)
 and **Mute agent voice** silences spoken replies; each leaves the other direction and the session running.
 In any opencode client, `/voice mic off|on` and `/voice speaker off|on` do the same. Stopping voice clears both mutes.
+When the speech server lists its voices (`GET …/v1/voices` beside `/v1/audio/speech`), a **Voice** picker shows
+them, plus **Server default**, which follows the server's own default. The choice is saved as `voice` in
+agent-voice.json and applies from the next sentence. **Preview voice** speaks a short line in it.
 The capture device stays open while the mic is muted, so the macOS microphone indicator stays on.
 It uses OpenChamber's extension SDK and the native OpenCode plugin. It does not alter the composer draft.
 Changing chats pauses voice. Closing or disconnecting the panel releases audio within 5 seconds.
