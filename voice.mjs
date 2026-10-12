@@ -138,6 +138,20 @@ export async function synthesizeStream(config,text,signal) {
   if(/wav|mpeg|json|text/i.test(type)){response.body?.cancel().catch(()=>{});throw new Error(`Speech service sent ${type}, not raw PCM; set "ttsStream": false.`);}
   return new PcmStream(response.body,{sampleRate:Number(response.headers.get('x-sample-rate'))||24000});
 }
+/** Voices the speech server lists next to its speech route (…/v1/audio/speech -> …/v1/voices), with its default.
+ * OpenAI's API has no such list, so null means the server offers no choice to show. */
+export async function listVoices(config,{fetch:fetchImpl=fetch,timeoutMs=3000}={}){
+  const url=config.ttsUrl?.replace(/\/audio\/speech\/?$/,'/voices');
+  if(!url||url===config.ttsUrl)return null;
+  try{
+    const response=await fetchImpl(url,{headers:config.ttsApiKey?{Authorization:'Bearer '+config.ttsApiKey}:{},signal:AbortSignal.timeout(timeoutMs)});
+    if(!response.ok)return null;
+    const body=await response.json(),list=Array.isArray(body)?body:body?.voices;
+    if(!Array.isArray(list))return null;
+    const voices=list.map(v=>typeof v==='string'?{id:v,name:v}:{id:String(v?.name??v?.id??''),name:String(v?.label??v?.name??v?.id??''),...(typeof v?.reference_seconds==='number'?{seconds:v.reference_seconds}:{})}).filter(v=>v.id);
+    return {voices,default:typeof body?.default==='string'?body.default:null};
+  }catch{return null;}
+}
 export function playFile(config,file,onChild,onPlaying=()=>{}){
   const command=process.platform==='darwin'?'afplay':config.ffplay;
   const args=process.platform==='darwin'?[file]:['-nodisp','-autoexit','-loglevel','error',file];

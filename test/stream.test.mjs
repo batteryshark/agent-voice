@@ -59,3 +59,14 @@ test('Without ttsStream (or on hosts without streaming playback) the WAV path is
     play:async()=>{}});
   assert.equal(speaker.streaming,false);speaker.enqueue('Hi.');await delay(20);await speaker.close();
 });
+test('listVoices reads the speech server list next to its speech route, or reports none',async()=>{
+  const {listVoices}=await import('../voice.mjs');let url,auth;
+  const fetch=async(u,init)=>{url=u;auth=init.headers.Authorization;return new Response(JSON.stringify({default:'mizuki',voices:[{name:'mizuki',label:'Mizuki',reference_seconds:8.8},{name:'lisa'}]}));};
+  const got=await listVoices({ttsUrl:'http://h:8444/v1/audio/speech',ttsApiKey:'k'},{fetch});
+  assert.equal(url,'http://h:8444/v1/voices');assert.equal(auth,'Bearer k');
+  assert.deepEqual(got,{voices:[{id:'mizuki',name:'Mizuki',seconds:8.8},{id:'lisa',name:'lisa'}],default:'mizuki'});
+  assert.deepEqual(await listVoices({ttsUrl:'http://h/v1/audio/speech'},{fetch:async()=>new Response(JSON.stringify(['a','b']))}),{voices:[{id:'a',name:'a'},{id:'b',name:'b'}],default:null});
+  assert.equal(await listVoices({ttsUrl:'http://h/v1/audio/speech'},{fetch:async()=>new Response('nope',{status:404})}),null);
+  assert.equal(await listVoices({ttsUrl:'http://h/v1/audio/speech'},{fetch:async()=>{throw new TypeError('fetch failed');}}),null);
+  assert.equal(await listVoices({ttsUrl:'http://h/speak'},{fetch}),null);
+});

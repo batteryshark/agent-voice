@@ -2199,6 +2199,7 @@ ${GUEST_UI_LOOK_CSS}`;
     mic.update({ label: enabled && state.micMuted ? "Unmute mic" : "Mute mic", disabled: !enabled || pending });
     speaker.update({ label: enabled && state.outputMuted ? "Unmute agent voice" : "Mute agent voice", disabled: !enabled || pending });
     check.update({ disabled: !session || !state.configured || pending || !!state.checking });
+    paintVoices();
     if (state.error) node("notice").textContent = state.error;
     if (state.result) node("notice").textContent = state.result.ok ? "Speaker interruption passed." : "Speaker interruption failed: " + state.result.reason;
   }
@@ -2241,6 +2242,47 @@ ${GUEST_UI_LOOK_CSS}`;
   mountButton(node("check"), { label: "Refresh devices", variant: "ghost", onClick: () => {
     void devices();
   } });
+  var voiceList = null;
+  var voiceName = (id) => voiceList?.voices.find((voice) => voice.id === id)?.name || id;
+  var voicePick = mountSelect(node("voice"), { label: "Voice", value: null, options: [], searchable: true, disabled: true, onChange: (voice) => {
+    voicePick.update({ value: voice });
+    chooseVoice(voice);
+  } });
+  var preview = mountButton(node("voice"), { label: "Preview voice", variant: "outline", disabled: true, onClick: () => {
+    const id = voiceList?.voice === "default" || !voiceList?.voice ? voiceList?.serverDefault || "" : voiceList.voice;
+    change("/command", { command: "preview", value: `This is the ${voiceName(id).replace(/\s*\(.*\)$/, "")} voice. Ready when you are.` });
+  } });
+  function paintVoices() {
+    const row = node("voice");
+    row.hidden = !voiceList?.available;
+    if (!voiceList?.available) return;
+    const options = [
+      ...voiceList.serverDefault ? [{ id: "default", label: `Server default (${voiceName(voiceList.serverDefault)})` }] : [],
+      ...voiceList.voices.map((voice) => ({ id: voice.id, label: voice.name, ...voice.seconds ? { hint: `${voice.seconds} s reference` } : {} }))
+    ];
+    voicePick.update({ options, value: voiceList.voice || "default", disabled: pending });
+    preview.update({ disabled: !session || pending });
+  }
+  async function voices() {
+    try {
+      voiceList = await request("/voices");
+    } catch {
+      voiceList = null;
+    }
+    paintVoices();
+  }
+  function chooseVoice(voice) {
+    mutation = mutation.catch(() => {
+    }).then(async () => {
+      try {
+        voiceList = await request("/voices", "POST", { voice });
+        paintVoices();
+      } catch (error) {
+        notice(error instanceof Error ? error : new Error("Could not change the voice"));
+        void voices();
+      }
+    });
+  }
   var keep = mountSwitch(node("background"), { label: "Keep running when hidden", checked: true, description: "Voice continues while you look at other panels or the agent opens a file. Closing the Voice tab still stops it.", onChange: (checked) => {
     keepRunning = checked;
     keep.update({ checked });
@@ -2269,11 +2311,15 @@ ${GUEST_UI_LOOK_CSS}`;
     if (!mounted) {
       mounted = true;
       void devices();
+      void voices();
     }
   });
   host.onDirectory((next) => {
     directory = next;
-    if (mounted) void devices();
+    if (mounted) {
+      void devices();
+      void voices();
+    }
   });
   host.onSession((next) => {
     const changed = next?.id !== session?.id;

@@ -10,7 +10,7 @@ const server=http.createServer(async(req,res)=>{
   if(!authorized(req.headers.authorization))return respond(401,{error:'Unauthorized'});
   const url=new URL(req.url,'http://localhost');
   if(url.pathname==='/health')return respond(200,{ready:true});
-  if(!['/state','/devices','/command','/pause'].includes(url.pathname))return respond(404,{error:'Unknown voice control'});
+  if(!['/state','/devices','/voices','/command','/pause'].includes(url.pathname))return respond(404,{error:'Unknown voice control'});
   try{
     let body='';for await(const chunk of req){body+=chunk;if(body.length>8192)throw new Error('Voice control request exceeds limit.');}
     const input=req.method==='GET'?Object.fromEntries(url.searchParams):JSON.parse(body||'{}');

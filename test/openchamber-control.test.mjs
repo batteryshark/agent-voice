@@ -34,3 +34,23 @@ test('hidden panel cancels pending startup and pauses its existing capture immed
  await f.hub.request('POST','/command',{...f.input,command:'on'});await f.hub.request('GET','/pause',f.input);
  assert.match(f.calls.at(-1)[1],/panel closed/);
 });
+test('Voice panel lists the speech server voices and saves a choice that exists there',async()=>{
+ const f=fixture(),instance=f.hub.instances.get('/project');let saved;
+ instance.config={voice:'default'};
+ instance.voices=async()=>({voices:[{id:'mizuki',name:'Mizuki'},{id:'lisa',name:'Lisa'}],default:'mizuki'});
+ instance.setVoice=voice=>{saved=voice;instance.config.voice=voice;};
+ assert.deepEqual(await f.hub.request('GET','/voices',f.input),{available:true,voices:[{id:'mizuki',name:'Mizuki'},{id:'lisa',name:'Lisa'}],serverDefault:'mizuki',voice:'default'});
+ assert.equal((await f.hub.request('POST','/voices',{...f.input,voice:'lisa'})).voice,'lisa');assert.equal(saved,'lisa');
+ await f.hub.request('POST','/voices',{...f.input,voice:'default'});assert.equal(saved,'default');
+ await assert.rejects(f.hub.request('POST','/voices',{...f.input,voice:'alloy'}),/not available/);
+ instance.voices=async()=>null;
+ assert.equal((await f.hub.request('GET','/voices',f.input)).available,false);
+ await assert.rejects(f.hub.request('POST','/voices',{...f.input,voice:'lisa'}),/does not list/);
+});
+test('Voice preview speaks a short line in the selected chat and rejects anything else',async()=>{
+ const f=fixture();
+ await f.hub.request('POST','/command',{...f.input,command:'preview',value:'This is the Lisa voice.'});
+ assert.deepEqual(f.calls.at(-1),['preview','ses_one']);
+ await assert.rejects(f.hub.request('POST','/command',{...f.input,command:'preview',value:'x'.repeat(201)}),/Unknown/);
+ await assert.rejects(f.hub.request('POST','/command',{...f.input,command:'preview'}),/Unknown/);
+});

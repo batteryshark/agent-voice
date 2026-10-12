@@ -50,7 +50,17 @@ export class OpenControlHub {
       }
       return {input:await listDeviceChoices(instance.config,'input'),output:await listDeviceChoices(instance.config,'output'),...instance.state()};
     }
-    if(method!=='POST'||endpoint!=='/command'||!['on','off','stop','check','mic','speaker'].includes(input.command))throw new Error('Unknown voice control.');
+    if(endpoint==='/voices'){
+      const listing=await instance.voices();
+      if(method==='POST'){
+        if(!listing)throw new Error('This speech server does not list its voices.');
+        if(typeof input.voice!=='string'||!(input.voice==='default'?listing.default:listing.voices.some(voice=>voice.id===input.voice)))
+          throw new Error('That voice is not available on the speech server. Reopen the panel and choose again.');
+        await instance.setVoice(input.voice);
+      }
+      return {available:!!listing,voices:listing?.voices||[],serverDefault:listing?.default||null,voice:instance.config.voice};
+    }
+    if(method!=='POST'||endpoint!=='/command'||!['on','off','stop','check','mic','speaker','preview'].includes(input.command))throw new Error('Unknown voice control.');
     if(['mic','speaker'].includes(input.command)){
       if(!['on','off'].includes(input.value))throw new Error('Unknown voice control.');
       if(!this.lease||this.lease.clientID!==input.clientID)throw new Error('Voice is controlled by another panel.');
@@ -58,6 +68,11 @@ export class OpenControlHub {
       return instance.state();
     }
     if(!input.sessionID)throw new Error('Open a chat before starting voice.');
+    if(input.command==='preview'){
+      if(typeof input.value!=='string'||!input.value.trim()||input.value.length>200)throw new Error('Unknown voice control.');
+      await instance.run('preview',input.value,input.sessionID);
+      return instance.state();
+    }
     if(input.command==='check'&&this.checking)throw new Error('A voice check is already running.');
     if(input.command==='on'||input.command==='check'){
       this.release('Voice moved to another panel.');this.result=null;

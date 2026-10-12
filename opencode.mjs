@@ -1,7 +1,7 @@
 // opencode 2.x server plugin. Registers /voice and reads replies from the event
 // stream, so any opencode client (TUI, OpenChamber, web) gets host-side voice.
 // No imports from @opencode/plugin: plugins load from bare directories.
-import {devices} from './voice.mjs';
+import {devices,listVoices} from './voice.mjs';
 import {listDeviceChoices,resolveDeviceChoice} from './device-options.mjs';
 import {VoiceEngine,loadConfig,opencodeConfigFile,piConfigFile,shared} from './engine.mjs';
 import {openChamberNotice} from './openchamber-notice.mjs';
@@ -40,7 +40,7 @@ export default {
 
     async function run(command='on',value,id){
       noticeSessionID=id;
-      if(['on','dictate','read','test','check'].includes(command)){
+      if(['on','dictate','read','test','check','preview'].includes(command)){
         if(sessionID&&sessionID!==id&&state.engine?.owns(host))state.engine.detach(host);
         sessionID=id;
       }
@@ -77,6 +77,7 @@ export default {
       else if(command==='status')await notice(`${mine()?lastStatus:'Voice: off'}; microphone ${config.inputDevice||config.device||'default'}; output ${config.outputDevice||'default'}; duplex ${config.duplex}; settings ${file}.`);
       else if(command==='check'){lastError=null;void notice('Voice check is warming up. Wait until you hear the sample, then say pineapple. The microphone turns off after this check.');const result=await engine().check(host);await notice(result.ok?'Voice check passed: spoken interruption detected.':'Voice check failed: '+result.reason);return result;}
       else if(command==='test'){engine().test(host);}
+      else if(command==='preview'){engine().say(host,value||'Your voice connection is ready.');}
       else await notice(USAGE);
     }
 
@@ -94,6 +95,9 @@ export default {
       load:directory=>ctx.command.list({location:{directory}}),
       session:async id=>{const result=await ctx.session.get({sessionID:id});return result.data??result;},
       configure:patch=>engine().configureDevices(patch),
+      // The speaker reads config.voice on each request, so a new voice applies from the next sentence.
+      voices:()=>listVoices(config),
+      setVoice:voice=>save({voice}),
       pause:message=>{mine()?.off();lastStatus=message;},
       state:()=>({enabled:!!mine()?.enabled,sessionID:mine()?sessionID:null,phase:mine()?.phase||'off',micMuted:!!mine()?.micMuted,outputMuted:!!mine()?.outputMuted,status:lastStatus,error:lastError,inputDevice:config.inputDevice,outputDevice:config.outputDevice,configured:!!config.asrUrl&&!!config.ttsUrl}),
     });
