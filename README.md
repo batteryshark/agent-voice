@@ -6,7 +6,8 @@ Hands-free voice conversation for coding agents. One package works as:
 - an **opencode 2.x plugin**, in the opencode TUI and in [OpenChamber](https://github.com/openchamber/openchamber)
 
 Talk to the agent, pause, and your words are sent as a message. Replies are spoken sentence by
-sentence while they stream. Start talking and the reply stops so you can cut in. The agent keeps its
+sentence while they stream. Start talking and the spoken reply stops so you can cut in; the agent keeps
+working and takes your words as a steer. The agent keeps its
 model, tools, skills, sessions and project behavior; voice is only another way in and out.
 
 ## How it works
@@ -34,10 +35,17 @@ speakers ◀─ native audio / ffplay ◀─ WAV ◀─ /v1/audio/speech ◀─ 
   into sentences. Each sentence goes to an OpenAI-compatible `/v1/audio/speech` endpoint as WAV, and the
   next sentence is fetched while the current one plays. macOS converts the WAV to PCM in memory. With
   `ttsStream`, macOS instead requests raw PCM and schedules each chunk on the native player as it arrives.
-- **Interruption:** macOS keeps the mic live during playback by default, with echo cancellation.
-  Starting speech stops audio immediately, cancels the native agent turn, and waits for cancellation
-  before submitting the new utterance. Late text from the interrupted reply stays silent.
-  Other platforms keep duplex off by default; their FFmpeg capture has no echo cancellation.
+- **Interruption (barge-in):** macOS keeps the mic live during playback by default. Speaking stops
+  playback and the rest of that reply stays silent, but the agent's work is not cancelled. When the
+  utterance ends it is submitted as a *steer*: opencode delivers it into the running turn
+  (`delivery: "steer"`), Pi injects it after the current tool calls (`deliverAs: "steer"`). When the
+  agent is idle it starts a normal turn. Onset is debounced: playback stops only after `bargeInMs` of
+  voiced speech or the first non-empty partial transcript, and onset is ignored for `onsetGraceMs`
+  after capture starts or restarts (for example after changing devices), when route changes tend to
+  produce noise. Only an explicit stop (`/voice stop`, Ctrl+Alt+X in Pi, **Interrupt reply** in the
+  panel) aborts the agent turn. Set `bargeInAborts: true` for the old behaviour, where speaking cancels
+  the turn and waits for cancellation before submitting. Other platforms keep duplex off by default;
+  their FFmpeg capture has no echo cancellation.
 
 ### Speech services you provide
 
@@ -114,6 +122,9 @@ Pi reads `~/.pi/agent/agent-voice.json` (or `$PI_CODING_AGENT_DIR/agent-voice.js
 | `outputDevice` | `default` | macOS output-device ID, saved by the native device selector |
 | `device` | `default` | Legacy microphone setting; Windows DirectShow name or Linux Pulse source |
 | `duplex` | `true` on macOS, `false` elsewhere | Allow spoken interruption during playback |
+| `bargeInMs` | `320` | Voiced speech (ms) within an utterance before it stops playback. A non-empty partial transcript also counts. `160` or less stops at onset |
+| `onsetGraceMs` | `1200` | Ignore speech onset for this long after capture starts or restarts |
+| `bargeInAborts` | `false` | Speaking also cancels the running agent turn before your words are sent (the earlier behaviour) |
 | `ffmpeg` / `ffplay` | found on `PATH` | Binary paths |
 
 `/voice devices`, `/voice input`, `/voice output`, and `/voice duplex` save their choices to this file.
@@ -130,7 +141,7 @@ The same `/voice` command works in every host:
 | `/voice off` | Stop capture and speech |
 | `/voice dictate` | Speech without read-aloud (Pi: into the editor; opencode: sent as messages) |
 | `/voice read on` / `off` | Read replies aloud with the microphone off |
-| `/voice stop` | Stop the spoken reply and abort the current agent turn |
+| `/voice stop` | Stop the spoken reply and abort the current agent turn (speaking only stops the reply) |
 | `/voice devices` | Choose microphone and output in the app's native selectors. |
 | `/voice input` / `/voice output` | Choose one direction in a native dialog, or append a device name or ID. |
 | `/voice duplex on` / `off` | Allow spoken interruption during playback / mute the mic during playback |
@@ -164,7 +175,8 @@ The plugin runs inside the opencode server, on the same machine. OpenChamber sta
 locally by default.
 
 - Your speech appears as normal user messages, and replies are read as they stream.
-- Speaking while the agent works interrupts the native turn before submitting your next instruction.
+- Speaking while the agent works stops the spoken reply and steers your words into the running turn;
+  it does not cancel the turn. `/voice stop` or **Interrupt reply** cancels it.
 - On/off confirmations are spoken. In OpenChamber, device lists, status and errors use its native
   notification channel. Other OpenCode clients receive `[voice]` entries in their synthetic inbox.
 - OpenChamber's own dictation and read-aloud buttons use the browser device's mic. They are separate

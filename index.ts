@@ -14,7 +14,9 @@ export default function(pi:ExtensionAPI){
   const engine=():VoiceEngine=>state.engine??=new VoiceEngine(config,save);
   const sessionFile=()=>ctx?.sessionManager.getSessionFile()||ctx?.sessionManager.getSessionId();
   const host={
-    submit:(text:string)=>pi.sendUserMessage(text,{deliverAs:'followUp',expandPromptTemplates:false}),
+    // While Pi is streaming, steer injects the utterance after the current tool calls instead of
+    // waiting for the whole run to finish (followUp); when idle it starts a turn either way.
+    submit:(text:string)=>pi.sendUserMessage(text,{deliverAs:'steer',expandPromptTemplates:false}),
     dictate:(text:string)=>{
       if(!ctx)return;
       // Outside the TUI getEditorText is a lagging mirror; paste inserts at the caret instead.

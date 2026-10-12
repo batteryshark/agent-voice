@@ -5,32 +5,33 @@ import {VoiceEngine} from '../engine.mjs';
 import {defaults} from '../voice.mjs';
 class Capture extends EventEmitter{start(){}stop(){}}
 class Input {constructor(config,callbacks){this.callbacks=callbacks;}stop(){}push(){}}
+// Old abort-on-speech mode (bargeInAborts) with no onset grace; barge-in.test.mjs covers the default.
 function fixture(){
  const calls=[],host={submit:async text=>calls.push(['submit',text]),abort:()=>new Promise(resolve=>host.finishAbort=resolve),isBusy:()=>true,status(){},error:e=>calls.push(['error',e.message])};
- const engine=new VoiceEngine({...defaults,asrUrl:'wss://example.invalid',ttsUrl:'https://example.invalid',duplex:true},()=>{},{platform:'linux',Capture,Input});
+ const engine=new VoiceEngine({...defaults,asrUrl:'wss://example.invalid',ttsUrl:'https://example.invalid',duplex:true,bargeInAborts:true,onsetGraceMs:0},()=>{},{platform:'linux',Capture,Input});
  engine.speaker={playing:true,stop:()=>calls.push(['stop']),prefetch:text=>({text}),enqueue:(text,options)=>{calls.push(['speak',text]);options?.onPlaying?.();},close:async()=>{}};engine.ensureSpeaker=()=>engine.speaker;
  return {engine,host,calls};
 }
-test('new utterance waits for confirmed agent interruption',async()=>{
- const f=fixture();await f.engine.start(f.host);f.engine.input.callbacks.start();assert.equal(f.calls.at(-1)[0],'stop');f.engine.input.callbacks.transcript('Replace the instruction');
+test('bargeInAborts: new utterance waits for confirmed agent interruption',async()=>{
+ const f=fixture();await f.engine.start(f.host);f.engine.input.callbacks.start();f.engine.input.callbacks.speaking();assert.equal(f.calls.at(-1)[0],'stop');f.engine.input.callbacks.transcript('Replace the instruction');
  await new Promise(resolve=>setImmediate(resolve));assert(!f.calls.some(c=>c[0]==='submit'));
  f.host.finishAbort();await new Promise(resolve=>setImmediate(resolve));assert(f.calls.some(c=>c[0]==='submit'));f.engine.halt();
 });
-test('spoken interruption cancels native work even if the busy notification is late',async()=>{
+test('bargeInAborts: spoken interruption cancels native work even if the busy notification is late',async()=>{
  const f=fixture();f.host.isBusy=()=>false;await f.engine.start(f.host);
- f.engine.input.callbacks.start();f.engine.input.callbacks.transcript('Use the new instruction');
+ f.engine.input.callbacks.start();f.engine.input.callbacks.speaking();f.engine.input.callbacks.transcript('Use the new instruction');
  await new Promise(resolve=>setImmediate(resolve));assert.equal(typeof f.host.finishAbort,'function');assert(!f.calls.some(c=>c[0]==='submit'));
  f.host.finishAbort();await new Promise(resolve=>setImmediate(resolve));assert(f.calls.some(c=>c[0]==='submit'));f.engine.halt();
 });
 test('late reply deltas cannot restart speech after talking interrupts it',async()=>{
- const f=fixture();await f.engine.start(f.host);f.engine.input.callbacks.start();
+ const f=fixture();await f.engine.start(f.host);f.engine.input.callbacks.start();f.engine.input.callbacks.speaking();
  f.engine.assistantDelta('This is a late sentence from the cancelled reply.');f.engine.assistantEnd();
  assert(!f.calls.some(c=>c[0]==='speak'));await Promise.resolve();f.host.finishAbort();f.engine.halt();
 });
 
-test('failed cancellation does not submit a spoken instruction',async()=>{
+test('bargeInAborts: failed cancellation does not submit a spoken instruction',async()=>{
  const f=fixture();f.host.abort=async()=>{throw new Error('cannot cancel');};await f.engine.start(f.host);
- f.engine.input.callbacks.start();f.engine.input.callbacks.transcript('Unsafe to send');
+ f.engine.input.callbacks.start();f.engine.input.callbacks.speaking();f.engine.input.callbacks.transcript('Unsafe to send');
  await new Promise(resolve=>setImmediate(resolve));assert(!f.calls.some(c=>c[0]==='submit'));assert(f.calls.some(c=>c[0]==='error'));f.engine.halt();
 });
 test('changing devices saves the choices and restarts capture without duplicate listeners',async()=>{
@@ -42,7 +43,7 @@ test('speaker check keeps the mic live, never submits to the agent, and restores
  const f=fixture();f.engine.config.duplex=false;
  const check=f.engine.check(f.host);await new Promise(resolve=>setImmediate(resolve));
  assert.equal(f.engine.input.callbacks.muted(),false);
- f.engine.input.callbacks.start();f.engine.input.callbacks.transcript('pineapple');
+ f.engine.input.callbacks.start();f.engine.input.callbacks.speaking();f.engine.input.callbacks.transcript('pineapple');
  assert.deepEqual(await check,{ok:true});
  assert(!f.calls.some(c=>c[0]==='submit'));assert.equal(f.engine.config.duplex,false);assert.equal(f.engine.enabled,false);
 });

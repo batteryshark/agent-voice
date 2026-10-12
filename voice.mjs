@@ -9,8 +9,11 @@ import {audioDevices} from './native-audio.mjs';
 
 // asrUrl: streaming recognition websocket; ttsUrl: OpenAI-compatible /v1/audio/speech.
 // ttsStream: request raw PCM (response_format "pcm") and play it as it arrives (macOS native audio only).
+// Barge-in: speech stops playback once bargeInMs of it is heard (or the first partial transcript arrives), except
+// within onsetGraceMs of capture (re)starting. bargeInAborts also cancels the agent turn, as older versions did.
 export const defaults={asrUrl:'',ttsUrl:'',ttsModel:'tts-1',voice:'alloy',ttsStream:false,
-  ffmpeg:'ffmpeg',ffplay:'ffplay',pauseMs:1100,threshold:0.012,duplex:process.platform==='darwin',inputDevice:'default',outputDevice:'default'};
+  ffmpeg:'ffmpeg',ffplay:'ffplay',pauseMs:1100,threshold:0.012,duplex:process.platform==='darwin',inputDevice:'default',outputDevice:'default',
+  bargeInMs:320,onsetGraceMs:1200,bargeInAborts:false};
 
 // GUI-launched hosts (desktop apps, daemons) often lack Homebrew in PATH.
 export function resolveBinary(name,env=process.env,platform=process.platform){
@@ -88,7 +91,7 @@ export class VoiceInput {
     if(!this.recognition){
       this.preroll.push(frame);if(this.preroll.length>15)this.preroll.shift();this.voiced=voiced?this.voiced+1:0;
       if(this.voiced<8)return;
-      this.callbacks.start?.();
+      this.callbacks.start?.();this.spoken=this.voiced;this.sustained=false;this.sustain();
       const recognition=this.createRecognition(this.config,{partial:text=>{if(this.recognition===recognition)this.callbacks.partial?.(text);},error:e=>{if(this.recognition===recognition)this.callbacks.error(e);},done:text=>{
         if(this.recognition!==recognition)return;this.recognition=null;this.waiting=false;this.voiced=0;this.silent=0;
         if(!this.closed&&text)this.callbacks.transcript(text);
@@ -96,10 +99,12 @@ export class VoiceInput {
       }});
       this.recognition=recognition;recognition.start();for(const pcm of this.preroll)recognition.write(pcm);this.preroll=[];this.frames=0;this.silent=0;
     }else{
-      this.recognition.write(frame);this.frames++;this.silent=voiced?0:this.silent+1;
+      this.recognition.write(frame);this.frames++;this.silent=voiced?0:this.silent+1;if(voiced){this.spoken++;this.sustain();}
       if(this.silent*20>=this.config.pauseMs||this.frames>=4500){this.waiting=true;this.recognition.end();}
     }
   }
+  // Voiced audio within the utterance reached bargeInMs: report it once as sustained speech.
+  sustain(){if(!this.sustained&&this.spoken*20>=(this.config.bargeInMs||0)){this.sustained=true;this.callbacks.speaking?.();}}
   /** Drop the utterance in progress (for a mic mute) and keep listening afterwards. */
   discard(){const recognition=this.recognition;this.recognition=null;this.waiting=false;this.voiced=0;this.silent=0;this.frames=0;this.buffer=Buffer.alloc(0);this.preroll=[];if(recognition){recognition.cancel();this.callbacks.idle?.();}}
   stop(){this.closed=true;this.recognition?.cancel();this.recognition=null;this.buffer=Buffer.alloc(0);this.preroll=[];}

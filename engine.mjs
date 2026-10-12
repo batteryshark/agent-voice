@@ -44,10 +44,10 @@ export function micHint(error){
  */
 export class VoiceEngine {
   constructor(config,save=()=>{},options={}){ // save(patch) persists settings
-    this.platform=options.platform||process.platform;this.Capture=options.Capture||AudioCapture;this.Input=options.Input||VoiceInput;this.NativeAudio=options.NativeAudio||MacAudio;
+    this.platform=options.platform||process.platform;this.Capture=options.Capture||AudioCapture;this.Input=options.Input||VoiceInput;this.NativeAudio=options.NativeAudio||MacAudio;this.now=options.now||Date.now;
     this.config=config;this.save=save;this.host=null;this.enabled=false;this.readAloud=false;this.dictation=false;
     this.capture=null;this.input=null;this.speaker=null;this.audio=null;this.interruption=Promise.resolve();this.suppressOutput=false;this.captureEpoch=0;
-    this.phase='off';this.acceptInput=false;
+    this.phase='off';this.acceptInput=false;this.liveAt=0;this.bargeArmed=false;
     // Independent mutes: the session, capture device and playback keep running.
     this.micMuted=false;this.outputMuted=false;
     this.speech=new SpeechSegments(text=>{if(this.readAloud&&!this.suppressOutput&&!this.outputMuted)this.ensureSpeaker().enqueue(text);});
@@ -57,9 +57,12 @@ export class VoiceEngine {
     if(this.phase==='warming-speech'){this.phase='listening';this.status();}
     this.host?.error(error);
   },this.platform==='darwin'?{playAudio:(...args)=>this.ensureAudio().play(...args),playStream:(...args)=>this.ensureAudio().playStream(...args)}:{});}
-  interrupt(){
+  // Barge-in stops playback and keeps the rest of the in-flight reply silent. The agent keeps working:
+  // the transcript is submitted as a steer. bargeInAborts restores cancelling the turn first.
+  interrupt(abort=!!this.config.bargeInAborts){
     this.speaker?.stop();this.speech.reset();this.suppressOutput=true;
     if(this.phase==='warming-speech')this.phase='listening';
+    if(!abort)return this.interruption;
     const host=this.host;
     // Native cancellation is safe for an idle turn too. Do not depend on a
     // client's potentially delayed busy notification when the user cuts in.
@@ -67,6 +70,11 @@ export class VoiceEngine {
     this.interruption.catch(()=>{});
     return this.interruption;
   }
+  // Onset is only a candidate: noise right after capture (re)starts is ignored, and playback stops once
+  // speech is sustained (bargeInMs) or recognition returns words.
+  onset(){this.bargeArmed=this.now()-this.liveAt>=(this.config.onsetGraceMs??0);this.status('Voice: hearing you…');}
+  bargeIn(){if(!this.bargeArmed)return;this.bargeArmed=false;this.interrupt();}
+  listen(){this.acceptInput=true;this.liveAt=this.now();}
   async deliver(text,epoch=this.captureEpoch){
     const host=this.host;
     try{
@@ -106,10 +114,11 @@ export class VoiceEngine {
     const prepared=cues.length?speaker.prefetch(cues[0]):null;
     this.input=new this.Input(this.config,{
       muted:()=>!this.config.duplex&&!!this.speaker?.playing,
-      start:()=>{this.interrupt();this.status('Voice: hearing you…');},
-      partial:text=>this.status('Voice: '+text.slice(-90)),
+      start:()=>this.onset(),
+      speaking:()=>this.bargeIn(),
+      partial:text=>{if(text.trim())this.bargeIn();this.status('Voice: '+text.slice(-90));},
       transcript:text=>{this.deliver(text,this.captureEpoch);},
-      idle:()=>this.status(),
+      idle:()=>{this.bargeArmed=false;this.status();},
       error:error=>{this.host?.error(error);this.halt();this.status();}
     });
     this.capture=this.platform==='darwin'?this.ensureAudio():new this.Capture(this.config);
@@ -119,18 +128,18 @@ export class VoiceEngine {
     try{if(this.platform==='darwin')await this.capture.start(true);else this.capture.start();}
     catch(error){if(this.host===host&&this.captureEpoch===epoch){host.error(new Error(micHint(error)));this.halt();}throw error;}
     if(this.host!==host||this.captureEpoch!==epoch||!this.enabled)throw new Error('Voice startup cancelled.');
-    this.acceptInput=!holdInputForCue;this.phase=prepared?'warming-speech':'listening';
+    if(!holdInputForCue)this.listen();this.phase=prepared?'warming-speech':'listening';
     this.status();
     if(prepared){
       speaker.enqueue(cues[0],{prepared,onPlaying:()=>{
         if(this.host!==host||this.captureEpoch!==epoch||!this.enabled)return;
-        this.acceptInput=true;this.phase=holdInputForCue?'checking':'listening';this.status();onCueStart?.();
+        if(!this.acceptInput)this.listen();this.phase=holdInputForCue?'checking':'listening';this.status();onCueStart?.();
       }});
       for(const text of cues.slice(1))speaker.enqueue(text);
     }
   }
   /** Stop capture and speech but keep ownership. */
-  halt(reason='Voice check was stopped.'){this.checkAbort?.(reason);this.checkAbort=null;this.captureEpoch++;this.enabled=false;this.phase='off';this.acceptInput=false;if(this.capture){this.capture.removeListener('pcm',this.onPCM);this.capture.removeListener('failure',this.onFailure);}if(this.platform==='darwin')this.capture?.close();else this.capture?.stop();this.capture=null;this.input?.stop();this.input=null;this.speaker?.stop();this.speech.reset();}
+  halt(reason='Voice check was stopped.'){this.checkAbort?.(reason);this.checkAbort=null;this.captureEpoch++;this.enabled=false;this.phase='off';this.acceptInput=false;this.bargeArmed=false;if(this.capture){this.capture.removeListener('pcm',this.onPCM);this.capture.removeListener('failure',this.onFailure);}if(this.platform==='darwin')this.capture?.close();else this.capture?.stop();this.capture=null;this.input?.stop();this.input=null;this.speaker?.stop();this.speech.reset();}
   async configureDevices(patch){
     const host=this.host,diagnostic=!!host?.voiceDiagnosticOwner,enabled=this.enabled&&!diagnostic,dictation=this.dictation,readAloud=diagnostic?false:this.readAloud;
     this.save(patch);Object.assign(this.config,patch);
@@ -179,8 +188,9 @@ export class VoiceEngine {
   }
 
   // Agent output hooks, fed by the host adapter.
-  userMessage(){this.hush();this.suppressOutput=false;}
-  assistantStart(){this.speech.reset();}
+  // A steered message lands mid-turn, so suppression lasts until the next reply text starts, not the user message.
+  userMessage(){this.hush();}
+  assistantStart(){this.speech.reset();this.suppressOutput=false;}
   assistantDelta(delta){if(this.readAloud&&!this.suppressOutput)this.speech.push(delta);}
   assistantText(fullText){if(this.readAloud&&!this.suppressOutput)this.speech.update(fullText);}
   assistantEnd(ok=true){if(ok&&!this.suppressOutput)this.speech.flush(true);else this.speaker?.stop();this.speech.reset();}

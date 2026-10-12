@@ -30,6 +30,8 @@ export default {
       return ctx.session.synthetic({sessionID:id,text:`[voice] ${text}`,description:'Voice',resume:false}).catch(error=>console.error(`[${ID}]`,text,error));
     };
     const host={
+      // opencode 2.x applies a steer at the running turn's next step instead of waiting for it to finish
+      // (its server default when delivery is omitted is also steer). Barge-in no longer aborts first.
       submit:text=>sessionID&&ctx.session.prompt({sessionID,text,delivery:busy.has(sessionID)?'steer':undefined}),
       abort:async()=>{if(sessionID){await ctx.session.interrupt({sessionID,continue:false});await ctx.session.wait?.({sessionID});}},
       isBusy:()=>!!sessionID&&busy.has(sessionID),
