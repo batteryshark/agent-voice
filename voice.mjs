@@ -5,10 +5,11 @@ import {existsSync} from 'node:fs';
 import {tmpdir,homedir} from 'node:os';
 import path from 'node:path';
 import {WebSocket} from 'ws';
+import {audioDevices} from './native-audio.mjs';
 
 // asrUrl: streaming recognition websocket; ttsUrl: OpenAI-compatible /v1/audio/speech.
 export const defaults={asrUrl:'',ttsUrl:'',ttsModel:'tts-1',voice:'alloy',
-  ffmpeg:'ffmpeg',ffplay:'ffplay',pauseMs:1100,threshold:0.012,duplex:false};
+  ffmpeg:'ffmpeg',ffplay:'ffplay',pauseMs:1100,threshold:0.012,duplex:process.platform==='darwin',inputDevice:'default',outputDevice:'default'};
 
 // GUI-launched hosts (desktop apps, daemons) often lack Homebrew in PATH.
 export function resolveBinary(name,env=process.env,platform=process.platform){
@@ -25,6 +26,7 @@ export function captureArgs(device,platform=process.platform) {
   return ['-hide_banner','-loglevel','error','-nostdin',...input,'-ar','16000','-ac','1','-f','s16le','pipe:1'];
 }
 export async function devices(config) {
+  if(process.platform==='darwin')return audioDevices();
   const args=process.platform==='darwin'?['-f','avfoundation','-list_devices','true','-i','']
     :process.platform==='win32'?['-list_devices','true','-f','dshow','-i','dummy']:['-sources','pulse'];
   return new Promise((resolve,reject)=>{
@@ -107,20 +109,27 @@ export async function synthesize(config,text,signal) {
   if(!response.ok)throw new Error(`Speech service returned ${response.status}: ${(await response.text()).slice(0,200)}`);
   return Buffer.from(await response.arrayBuffer());
 }
-export function playFile(config,file,onChild){
+export function playFile(config,file,onChild,onPlaying=()=>{}){
   const command=process.platform==='darwin'?'afplay':config.ffplay;
   const args=process.platform==='darwin'?[file]:['-nodisp','-autoexit','-loglevel','error',file];
   return new Promise((resolve,reject)=>{
     const child=spawn(command,args,{windowsHide:true,stdio:'ignore'});onChild(child);
+    child.once('spawn',onPlaying);
     child.once('error',reject);child.once('exit',(code,signal)=>code===0||signal?resolve():reject(new Error(`Audio playback exited (${code}).`)));
   });
 }
 export class Speaker {
-  constructor(config,onError=()=>{},options={}){this.config=config;this.onError=onError;this.synth=options.synth||synthesize;this.play=options.play||playFile;this.queue=[];this.controllers=new Set();this.epoch=0;this.playing=false;}
-  enqueue(text){if(!text.trim())return;this.queue.push({text,epoch:this.epoch});this.prepare();this.startPump();}
+  constructor(config,onError=()=>{},options={}){this.config=config;this.onError=onError;this.synth=options.synth||synthesize;this.play=options.play||playFile;this.playAudio=options.playAudio;this.queue=[];this.controllers=new Set();this.epoch=0;this.playing=false;}
+  // Start synthesis while the selected devices initialize. The ticket stays in
+  // memory, shares normal cancellation, and is only queued once audio is ready.
+  prefetch(text){
+    const abort=new AbortController();this.controllers.add(abort);
+    const promise=this.synth(this.config,text,abort.signal).finally(()=>this.controllers.delete(abort));promise.catch(()=>{});
+    return {text,epoch:this.epoch,promise};
+  }
+  enqueue(text,{prepared,onPlaying}={}){if(!text.trim())return;this.queue.push({...prepared,text,epoch:prepared?.epoch??this.epoch,onPlaying});this.prepare();this.startPump();}
   startPump(){if(!this.running)this.running=this.pump().finally(()=>{this.running=null;if(this.prepared||this.queue.length)this.startPump();});}
-  prepare(){if(this.prepared||!this.queue.length)return;const item=this.queue.shift(),abort=new AbortController();this.controllers.add(abort);
-    const promise=this.synth(this.config,item.text,abort.signal).finally(()=>this.controllers.delete(abort));promise.catch(()=>{});this.prepared={...item,promise};}
+  prepare(){if(this.prepared||!this.queue.length)return;const item=this.queue.shift();this.prepared=item.promise?item:{...this.prefetch(item.text),onPlaying:item.onPlaying};}
   async pump(){
     while(this.prepared){
       const item=this.prepared;
@@ -128,11 +137,17 @@ export class Speaker {
         const audio=await item.promise;
         if(item.epoch!==this.epoch)continue;
         this.prepared=null;this.prepare();
+        if(this.playAudio){
+          this.playing=true;
+          try{await this.playAudio(this.config,audio,child=>this.player=child,()=>{if(item.epoch===this.epoch)item.onPlaying?.();});}
+          finally{this.playing=false;this.player=null;}
+        }else{
         this.directory??=await mkdtemp(path.join(tmpdir(),'agent-voice-'));
         const file=path.join(this.directory,`${Date.now()}-${Math.random().toString(16).slice(2)}.wav`);
         await writeFile(file,audio);
-        try{if(item.epoch===this.epoch){this.playing=true;await this.play(this.config,file,child=>this.player=child);}}
+        try{if(item.epoch===this.epoch){this.playing=true;await this.play(this.config,file,child=>this.player=child,()=>{if(item.epoch===this.epoch)item.onPlaying?.();});}}
         finally{this.playing=false;this.player=null;await unlink(file).catch(()=>{});}
+        }
       }catch(error){if(item.epoch===this.epoch && error.name!=='AbortError')this.onError(error);}
       finally{if(this.prepared===item)this.prepared=null;this.prepare();}
     }

@@ -1,6 +1,6 @@
 {
   "name": "agent-voice",
-  "version": "0.1.0",
+  "version": "0.2.4",
   "description": "Hands-free voice conversation for Pi (TUI, PiChamber) and opencode 2.x (TUI, OpenChamber).",
   "license": "MIT",
   "type": "module",
@@ -27,10 +27,20 @@
     "opencode.mjs",
     "engine.mjs",
     "voice.mjs",
-    "speech.mjs"
+    "speech.mjs",
+    "native-audio.mjs",
+    "device-options.mjs",
+    "openchamber-notice.mjs",
+    "opencode-devices.mjs",
+    "openchamber-control.mjs",
+    "openchamber",
+    "native/audio.swift",
+    "bin/audio-macos",
+    "scripts/test-native-audio.mjs"
   ],
   "scripts": {
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "test:audio": "node scripts/test-native-audio.mjs"
   },
   "dependencies": {
     "ws": "^8.18.3"
@@ -41,6 +51,37 @@
   "peerDependenciesMeta": {
     "@earendil-works/pi-coding-agent": {
       "optional": true
+    }
+  },
+  "openchamber": {
+    "apiVersion": 1,
+    "engines": {
+      "openchamber": ">=2.2.0"
+    },
+    "contributes": {
+      "panel": {
+        "id": "speakrail-voice",
+        "name": "Voice",
+        "icon": "mic",
+        "entry": "openchamber/panel/index.html"
+      },
+      "attach": false,
+      "service": {
+        "entry": "openchamber/service.mjs",
+        "runtime": "host",
+        "permissions": {
+          "sockets": [
+            {
+              "id": "voice",
+              "candidates": {
+                "darwin": [
+                  "~/.cache/agent-voice/openchamber.sock"
+                ]
+              }
+            }
+          ]
+        }
+      }
     }
   }
 }

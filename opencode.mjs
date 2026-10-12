@@ -2,10 +2,14 @@
 // stream, so any opencode client (TUI, OpenChamber, web) gets host-side voice.
 // No imports from @opencode/plugin: plugins load from bare directories.
 import {devices} from './voice.mjs';
+import {listDeviceChoices,resolveDeviceChoice} from './device-options.mjs';
 import {VoiceEngine,loadConfig,opencodeConfigFile,piConfigFile,shared} from './engine.mjs';
+import {openChamberNotice} from './openchamber-notice.mjs';
+import {selectOpenDevices} from './opencode-devices.mjs';
+import {registerOpenControl} from './openchamber-control.mjs';
 
 const ID='agent-voice';
-const USAGE='Voice commands: /voice on, off, dictate, read on|off, stop, duplex on|off, devices, status, test.';
+const USAGE='Voice commands: /voice on, off, dictate, read on|off, stop, duplex on|off, devices, input, output, status, test, check.';
 
 export default {
   id:ID,
@@ -14,56 +18,82 @@ export default {
     const state=shared();
     const engine=()=>state.engine??=new VoiceEngine(config,save);
     const busy=new Set();
-    let sessionID=null,lastStatus='Voice: off';
+    const abort=new AbortController();
+    let sessionID=null,noticeSessionID=null,lastStatus='Voice: off',lastError=null;
 
-    // Server plugins have no toast or status line that every client shows. Routine
-    // confirmations are spoken; status, device lists and errors become synthetic
-    // inbox entries (visible in the session, delivered with the next turn).
-    const notice=text=>{
-      if(!sessionID)return console.error(`[${ID}] ${text}`);
-      ctx.session.synthetic({sessionID,text:`[voice] ${text}`,description:'Voice',resume:false}).catch(error=>console.error(`[${ID}]`,text,error));
+    // OpenChamber provides a native notification channel. Other clients receive
+    // requested notices in their synthetic inbox without starting an agent turn.
+    const notice=async(text,id=noticeSessionID||sessionID)=>{
+      if(!id)return console.error(`[${ID}] ${text}`);
+      try{if(await openChamberNotice(text,id))return;}
+      catch(error){console.error(`[${ID}] native notice`,error.message);}
+      return ctx.session.synthetic({sessionID:id,text:`[voice] ${text}`,description:'Voice',resume:false}).catch(error=>console.error(`[${ID}]`,text,error));
     };
     const host={
-      submit:text=>sessionID&&ctx.session.prompt({sessionID,text,delivery:busy.has(sessionID)?'steer':undefined}).catch(error=>notice(String(error?.message||error))),
-      abort:()=>sessionID&&ctx.session.interrupt({sessionID}).catch(()=>{}),
+      submit:text=>sessionID&&ctx.session.prompt({sessionID,text,delivery:busy.has(sessionID)?'steer':undefined}),
+      abort:async()=>{if(sessionID){await ctx.session.interrupt({sessionID,continue:false});await ctx.session.wait?.({sessionID});}},
       isBusy:()=>!!sessionID&&busy.has(sessionID),
       status:text=>{lastStatus=text;},
-      error:error=>notice(String(error?.message||error)),
+      error:error=>{lastError=String(error?.message||error);void notice(lastError,sessionID);},
     };
-    const mine=()=>state.engine?.owns(host)?state.engine:null;
+    const mine=(id=sessionID)=>state.engine?.owns(host)&&id===sessionID?state.engine:null;
 
     async function run(command='on',value,id){
-      sessionID=id;
-      if(command==='on'){await engine().start(host);mine()?.say(host,'Listening.');}
+      noticeSessionID=id;
+      if(['on','dictate','read','test','check'].includes(command)){
+        if(sessionID&&sessionID!==id&&state.engine?.owns(host))state.engine.detach(host);
+        sessionID=id;
+      }
+      if(command==='on'){lastError=null;await engine().start(host,{cue:'Listening.'});}
       else if(command==='dictate'){
         // Clients don't expose their composer to plugins, so dictation is spoken
         // input submitted without read-aloud.
-        await engine().start(host,{dictation:true});mine()?.say(host,'Dictation on.');
+        await engine().start(host,{dictation:true,cue:'Dictation on.'});
       }
-      else if(command==='off'){const e=mine();e?.off();e?.say(host,'Voice off.');}
-      else if(command==='stop'){mine()?.hush();await ctx.session.interrupt({sessionID:id}).catch(()=>{});}
+      else if(command==='off'){const e=mine(id);e?.off();e?.say(host,'Voice off.');}
+      else if(command==='stop'){mine(id)?.hush();await ctx.session.interrupt({sessionID:id,continue:false});await ctx.session.wait?.({sessionID:id});}
       else if(command==='read'){engine().setReadAloud(host,value!=='off');if(value!=='off')engine().say(host,'Reading replies aloud.');}
-      else if(command==='duplex'){save({duplex:value==='on'});engine().say(host,config.duplex?'Interruption on. Use headphones.':'Interruption off.');}
-      else if(command==='devices'){
-        if(value){save({device:value});notice(`Microphone set to ${value}.`);}
-        else notice('Microphones (set one with /voice devices <name or index>):\n'+String(await devices(config)).split('\n').filter(line=>/audio|\(audio\)|^\[/i.test(line)).join('\n'));
+      else if(command==='duplex'){save({duplex:value==='on'});engine().say(host,config.duplex?'Spoken interruption on.':'Interruption off.');}
+      else if(['devices','input','output'].includes(command)){
+        const directions=command==='devices'?['input','output']:[command];
+        if(!value&&ctx.session.form){
+          const patch=await selectOpenDevices(ctx,config,id,directions,abort.signal);
+          if(patch){await engine().configureDevices(patch);await notice('Voice audio devices saved.');}
+          return;
+        }
+        for(const direction of directions){
+          const choices=await listDeviceChoices(config,direction);
+          if(value&&command!=='devices'){
+            const choice=resolveDeviceChoice(choices,value);
+            await engine().configureDevices({[direction==='input'?'inputDevice':'outputDevice']:choice.id});
+            await notice((direction==='input'?'Microphone':'Output')+' set to '+choice.name+'.');
+          }else await notice((direction==='input'?'Microphones':'Output devices')+' — choose with /voice '+direction+' <name>:\n'+choices.map(choice=>choice.name).join('\n'));
+        }
       }
-      else if(command==='status')notice(`${mine()?lastStatus:'Voice: off'}; ${config.asrUrl}; ${config.ttsUrl}; microphone ${config.device||'default'}; ffmpeg ${config.ffmpeg}; settings ${file}.`);
+      else if(command==='status')await notice(`${mine()?lastStatus:'Voice: off'}; microphone ${config.inputDevice||config.device||'default'}; output ${config.outputDevice||'default'}; duplex ${config.duplex}; settings ${file}.`);
+      else if(command==='check'){lastError=null;void notice('Voice check is warming up. Wait until you hear the sample, then say pineapple. The microphone turns off after this check.');const result=await engine().check(host);await notice(result.ok?'Voice check passed: spoken interruption detected.':'Voice check failed: '+result.reason);return result;}
       else if(command==='test'){engine().test(host);}
-      else notice(USAGE);
+      else await notice(USAGE);
     }
 
     await ctx.command.transform(commands=>commands.add({
       name:'voice',
-      description:'Voice conversation: on, off, dictate, read on|off, stop, duplex on|off, devices, status, test',
+      description:'Voice conversation: on, off, dictate, read on|off, stop, duplex on|off, devices, input, output, status, test, check',
       execute:async({sessionID:id,prompt})=>{
         const [command,...rest]=(prompt?.text||'').trim().split(/\s+/).filter(Boolean);
         try{await run(command,rest.join(' ')||undefined,id);}
-        catch(error){mine()?.stop();notice(String(error?.message||error));}
+        catch(error){mine()?.stop();await notice(String(error?.message||error));}
       },
     }));
+    const closeControl=ctx.location&&process.env.OPENCHAMBER_AGENT_TOOL_URL&&await registerOpenControl({
+      directory:ctx.location.directory,config,run,
+      load:directory=>ctx.command.list({location:{directory}}),
+      session:async id=>{const result=await ctx.session.get({sessionID:id});return result.data??result;},
+      configure:patch=>engine().configureDevices(patch),
+      pause:message=>{mine()?.off();lastStatus=message;},
+      state:()=>({enabled:!!mine()?.enabled,sessionID:mine()?sessionID:null,phase:mine()?.phase||'off',status:lastStatus,error:lastError,inputDevice:config.inputDevice,outputDevice:config.outputDevice,configured:!!config.asrUrl&&!!config.ttsUrl}),
+    });
 
-    const abort=new AbortController();
     (async()=>{
       while(!abort.signal.aborted){
         try{
@@ -87,6 +117,7 @@ export default {
 
     return async()=>{
       abort.abort();
+      await closeControl?.();
       const e=mine();if(e){state.engine=null;await e.close();}
     };
   },

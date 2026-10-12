@@ -1,6 +1,7 @@
 import type {ExtensionAPI,ExtensionContext} from '@earendil-works/pi-coding-agent';
 import {devices,windowsMicrophones} from './voice.mjs';
 import {VoiceEngine,loadConfig,piConfigFile,shared} from './engine.mjs';
+import {listDeviceChoices,resolveDeviceChoice} from './device-options.mjs';
 
 // Runs in the Pi TUI and in hosts that drive Pi through its SDK/RPC with extension
 // UI (PiChamber reports mode 'rpc' with hasUI). Audio stays on the machine running Pi.
@@ -20,7 +21,14 @@ export default function(pi:ExtensionAPI){
       if(ctx.mode!=='tui'){ctx.ui.pasteToEditor(text+' ');return;}
       const prior=ctx.ui.getEditorText()||'';ctx.ui.setEditorText(prior+(prior&&!/\s$/.test(prior)?' ':'')+text);
     },
-    abort:()=>ctx?.abort(),
+    abort:async()=>{
+      const context=ctx;if(!context)return;context.abort();
+      const until=Date.now()+5000;
+      while(!context.isIdle()){
+        if(Date.now()>until)throw new Error('Pi has not finished cancelling the current turn.');
+        await new Promise(resolve=>setTimeout(resolve,20));
+      }
+    },
     isBusy:()=>!!ctx&&!ctx.isIdle(),
     status:(text:string)=>ctx?.ui.setStatus('agent-voice',text),
     error:(error:any)=>ctx?.ui.notify(String(error?.message||error),'error'),
@@ -33,25 +41,38 @@ export default function(pi:ExtensionAPI){
   async function start(context:ExtensionContext,dictation=false){
     ctx=context;requireUI(context);await engine().start(host,{dictation});
   }
-  const usage='Use /voice on, off, dictate, read on|off, stop, devices, duplex on|off, status, or test.';
+  const usage='Use /voice on, off, dictate, read on|off, stop, devices, input, output, duplex on|off, status, test, or check.';
 
   pi.registerCommand('voice',{
-    description:'Voice: on, off, dictate, read on/off, stop, devices, status, duplex on/off, test',
+    description:'Voice: on, off, dictate, read on/off, stop, devices, input/output, status, duplex on/off, test, check',
     handler:async(args,context)=>{
-      ctx=context;const [command='on',value]=(args||'').trim().split(/\s+/);
+      ctx=context;const [command='on',...rest]=(args||'').trim().split(/\s+/);const value=rest.join(' ');
       try{
         if(command==='on')await start(context);
         else if(command==='dictate')await start(context,true);
         else if(command==='off'){mine()?.off();state.resume=null;host.status('Voice: off');}
         else if(command==='stop'){mine()?.hush();context.abort();}
         else if(command==='read'){engine().setReadAloud(host,value!=='off');}
-        else if(command==='duplex'){save({duplex:value==='on'});context.ui.notify(`Voice interruption ${config.duplex?'enabled; use headphones':'disabled during playback'}.`,'info');}
-        else if(command==='devices'){
-          const output=String(await devices(config));
-          if(process.platform==='win32'){const names=windowsMicrophones(output);if(names.length){const device=await context.ui.select('Voice microphone',names);if(device)save({device});}}
-          else{context.ui.notify(output,'info');if(process.platform==='darwin'){const device=await context.ui.input('Microphone name or audio index','default');if(device)save({device});}}
+        else if(command==='duplex'){save({duplex:value==='on'});context.ui.notify(`Voice interruption ${config.duplex?'enabled':'disabled during playback'}.`,'info');}
+        else if(['devices','input','output'].includes(command)){
+          requireUI(context);
+          const patch:Record<string,string>={};
+          for(const direction of command==='devices'?['input','output']:[command]){
+            const choices=await listDeviceChoices(config,direction);
+            let choice;
+            if(value&&command!=='devices')choice=resolveDeviceChoice(choices,value);
+            else{
+              const labels=choices.map((item:any,index:number)=>item.name+(choices.filter((other:any)=>other.name===item.name).length>1?' ('+index+')':''));
+              const selected=await context.ui.select(direction==='input'?'Voice microphone':'Voice output device',labels);
+              if(!selected)return;
+              choice=choices[labels.indexOf(selected)];
+            }
+            patch[direction==='input'?'inputDevice':'outputDevice']=choice.id;
+          }
+          await engine().configureDevices(patch);context.ui.notify('Voice audio devices saved.','info');
         }
-        else if(command==='status'){const e=mine();context.ui.notify(`${e?e.state():'Voice: off'}; ${context.mode} mode; ${config.asrUrl}; ${config.ttsUrl}; microphone ${config.device||'default'}; ffmpeg ${config.ffmpeg}; settings ${file}.`,'info');}
+        else if(command==='status'){const e=mine();context.ui.notify(`${e?e.state():'Voice: off'}; ${context.mode} mode; ${config.asrUrl}; ${config.ttsUrl}; microphone ${config.inputDevice||config.device||'default'}; output ${config.outputDevice||'default'}; duplex ${config.duplex}; ffmpeg ${config.ffmpeg}; settings ${file}.`,'info');}
+        else if(command==='check'){const result=await engine().check(host);context.ui.notify(result.ok?'Voice check passed: spoken interruption detected.':'Voice check failed: '+result.reason,result.ok?'info':'error');}
         else if(command==='test'){engine().test(host);context.ui.notify('Playing a speech test.','info');}
         else context.ui.notify(usage,'info');
       }catch(error:any){mine()?.stop();host.error(error);}
