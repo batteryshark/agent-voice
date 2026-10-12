@@ -1,5 +1,5 @@
 import {connectHost} from '@openchamber/sdk';
-import {applyHostReady,mountButton,mountSelect} from '@openchamber/sdk/ui';
+import {applyHostReady,mountButton,mountSelect,mountSwitch} from '@openchamber/sdk/ui';
 import {voiceStatus,type VoicePhase} from './status';
 const host=connectHost(),clientID=crypto.randomUUID();
 type Choice={id:string;name:string};
@@ -8,6 +8,11 @@ let directory:string|null=null,session:{id:string;title?:string}|null=null,mount
 let state:State={enabled:false,sessionID:null,status:'Microphone off',error:null,inputDevice:'default',outputDevice:'default',configured:false};
 let mutation=Promise.resolve();
 let starting=false;
+// Opt-in: keep voice running while this panel is hidden behind another tab,
+// in a closed zone, or in a minimized window. Closing the Voice tab itself
+// still releases audio, because the heartbeat stops with the page.
+const KEEP_KEY='keepRunningHidden';
+let keepRunning=false;
 const node=(id:string)=>{const element=document.getElementById(id);if(!element)throw new Error('Missing Voice panel control');return element;};
 const notice=(error:Error)=>{node('notice').textContent=error.message;};
 async function request(path:string,method:'GET'|'POST'='GET',extra:object={}){
@@ -41,6 +46,8 @@ const input=mountSelect(node('audio'),{label:'Microphone',value:'default',option
 const output=mountSelect(node('audio'),{label:'Output device',value:'default',options:[],searchable:true,onChange:outputDevice=>{output.update({value:outputDevice});change('/devices',{outputDevice});}});
 const check=mountButton(node('check'),{label:'Test speaker interruption',variant:'outline',disabled:true,onClick:()=>change('/command',{command:'check'})});
 mountButton(node('check'),{label:'Refresh devices',variant:'ghost',onClick:()=>{void devices();}});
+const keep=mountSwitch(node('background'),{label:'Keep running when hidden',checked:false,description:'Voice continues while you look at other panels or the agent opens a file. Closing the Voice tab still stops it.',onChange:checked=>{keepRunning=checked;keep.update({checked});void host.storage.set(KEEP_KEY,checked).catch(()=>{});}});
+void host.storage.get(KEEP_KEY).then(value=>{keepRunning=value===true;keep.update({checked:keepRunning});}).catch(()=>{});
 async function devices(){
   try{state=await request('/devices');input.update({value:state.inputDevice,options:(state.input||[]).map(item=>({id:item.id,label:item.name}))});output.update({value:state.outputDevice,options:(state.output||[]).map(item=>({id:item.id,label:item.name}))});paint();}
   catch(error){notice(error instanceof Error?error:new Error('Audio devices are unavailable'));}
@@ -48,9 +55,10 @@ async function devices(){
 host.onReady(context=>{applyHostReady(context,document.documentElement);directory=context.directory;session=context.session;if(!mounted){mounted=true;void devices();}});
 host.onDirectory(next=>{directory=next;if(mounted)void devices();});
 host.onSession(next=>{const changed=next?.id!==session?.id;session=next;paint();if(changed&&mounted&&directory)void request('/state').then(value=>{state=value;paint();}).catch(error=>notice(error instanceof Error?error:new Error('Voice paused')));});
-function pauseHidden(){if(mounted&&directory)void request('/pause').catch(()=>{});}
+function pauseHidden(){if(!keepRunning&&mounted&&directory)void request('/pause').catch(()=>{});}
 // The host keeps rail pages mounted while hidden. Observe our own panel's
-// visibility so a kept-alive page cannot keep the microphone active.
+// visibility so a kept-alive page cannot keep the microphone active, unless
+// the user turned on "Keep running when hidden".
 new IntersectionObserver(entries=>{
   const next=entries.some(entry=>entry.isIntersecting);
   if(visible&&!next)pauseHidden();visible=next;
@@ -60,6 +68,7 @@ document.addEventListener('visibilitychange',()=>{if(document.hidden)pauseHidden
 // The native SDK supplies the selected chat. A heartbeat also releases audio
 // after this panel closes or disconnects, without reading any windows or drafts.
 setInterval(()=>{
-  if(!mounted||!directory||!visible||document.hidden||refreshing)return;refreshing=true;
+  if(!mounted||!directory||refreshing)return;
+  if(!keepRunning&&(!visible||document.hidden))return;refreshing=true;
   void request('/state').then(value=>{state=value;paint();}).catch(error=>notice(error instanceof Error?error:new Error('Voice disconnected'))).finally(()=>refreshing=false);
 },1000);

@@ -175,6 +175,9 @@ Open **Voice** on the right-hand rail. Choose microphone and output, then click 
 The panel has **Interrupt reply** and **Test speaker interruption** controls, plus live microphone status.
 It uses OpenChamber's extension SDK and the native OpenCode plugin. It does not alter the composer draft.
 Changing chats pauses voice. Closing or disconnecting the panel releases audio within 5 seconds.
+By default, hiding the panel (another tab in front, such as a file the agent opens, or a closed zone)
+also pauses voice. Turn on **Keep running when hidden** to keep talking while you look at other panels;
+closing the Voice tab itself still releases audio within 5 seconds.
 The microphone starts off. Extension service requests travel over a private local socket; approvals stay
 in OpenChamber's usual interface. The panel's speech test turns the microphone off afterward.
 

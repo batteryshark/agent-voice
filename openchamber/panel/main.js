@@ -2029,6 +2029,49 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
     };
   };
 
+  // ../speakrail-panel-build/node_modules/@openchamber/sdk/dist/ui/checkbox.js
+  var mountToggle = (root, initial, role) => {
+    ensureStyle(UI_CSS);
+    let props = initial;
+    const node2 = button("oc-sdk oc-sdk-check");
+    node2.setAttribute("role", role);
+    const control = el("span", role === "switch" ? "oc-sdk-check-thumb" : "oc-sdk-check-box");
+    if (role === "checkbox") {
+      control.append(icon("check", 12));
+    }
+    const text = el("span", "oc-sdk-check-text");
+    const label = el("span", "oc-sdk-check-label");
+    const description = el("span", "oc-sdk-check-desc");
+    text.append(label, description);
+    node2.append(control, text);
+    root.append(node2);
+    const paint2 = () => {
+      node2.setAttribute("aria-checked", props.checked ? "true" : "false");
+      node2.disabled = Boolean(props.disabled);
+      setText(label, props.label);
+      setText(description, props.description);
+      description.hidden = !props.description;
+    };
+    const onClick = () => {
+      if (!props.disabled) {
+        props.onChange(!props.checked);
+      }
+    };
+    node2.addEventListener("click", onClick);
+    paint2();
+    return {
+      update: (next) => {
+        props = { ...props, ...next };
+        paint2();
+      },
+      dispose: () => {
+        node2.removeEventListener("click", onClick);
+        node2.remove();
+      }
+    };
+  };
+  var mountSwitch = (root, initial) => mountToggle(root, initial, "switch");
+
   // openchamber/panel/status.ts
   function voiceStatus(state2, sessionID, starting2 = false) {
     const current = state2.sessionID === sessionID;
@@ -2053,6 +2096,8 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
   var state = { enabled: false, sessionID: null, status: "Microphone off", error: null, inputDevice: "default", outputDevice: "default", configured: false };
   var mutation = Promise.resolve();
   var starting = false;
+  var KEEP_KEY = "keepRunningHidden";
+  var keepRunning = false;
   var node = (id) => {
     const element = document.getElementById(id);
     if (!element) throw new Error("Missing Voice panel control");
@@ -2119,6 +2164,17 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
   mountButton(node("check"), { label: "Refresh devices", variant: "ghost", onClick: () => {
     void devices();
   } });
+  var keep = mountSwitch(node("background"), { label: "Keep running when hidden", checked: false, description: "Voice continues while you look at other panels or the agent opens a file. Closing the Voice tab still stops it.", onChange: (checked) => {
+    keepRunning = checked;
+    keep.update({ checked });
+    void host.storage.set(KEEP_KEY, checked).catch(() => {
+    });
+  } });
+  void host.storage.get(KEEP_KEY).then((value) => {
+    keepRunning = value === true;
+    keep.update({ checked: keepRunning });
+  }).catch(() => {
+  });
   async function devices() {
     try {
       state = await request("/devices");
@@ -2152,7 +2208,7 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
     }).catch((error) => notice(error instanceof Error ? error : new Error("Voice paused")));
   });
   function pauseHidden() {
-    if (mounted && directory) void request("/pause").catch(() => {
+    if (!keepRunning && mounted && directory) void request("/pause").catch(() => {
     });
   }
   new IntersectionObserver((entries) => {
@@ -2169,7 +2225,8 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
     if (document.hidden) pauseHidden();
   });
   setInterval(() => {
-    if (!mounted || !directory || !visible || document.hidden || refreshing) return;
+    if (!mounted || !directory || refreshing) return;
+    if (!keepRunning && (!visible || document.hidden)) return;
     refreshing = true;
     void request("/state").then((value) => {
       state = value;
