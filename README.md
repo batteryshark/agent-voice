@@ -173,6 +173,10 @@ locally by default.
 Install this same folder in **Settings → Extensions → Add** and enable its local service.
 Open **Voice** on the right-hand rail. Choose microphone and output, then click **Start conversation**.
 The panel has **Interrupt reply** and **Test speaker interruption** controls, plus live microphone status.
+While voice is on, **Mute mic** stops sending your audio (for example while you talk to someone else)
+and **Mute agent voice** silences spoken replies; each leaves the other direction and the session running.
+In any opencode client, `/voice mic off|on` and `/voice speaker off|on` do the same. Stopping voice clears both mutes.
+The capture device stays open while the mic is muted, so the macOS microphone indicator stays on.
 It uses OpenChamber's extension SDK and the native OpenCode plugin. It does not alter the composer draft.
 Changing chats pauses voice. Closing or disconnecting the panel releases audio within 5 seconds.
 By default, hiding the panel (another tab in front, such as a file the agent opens, or a closed zone)

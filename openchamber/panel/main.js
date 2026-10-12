@@ -2123,6 +2123,8 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
     node("status").setAttribute("aria-busy", String(status.warming));
     toggle.update({ label: enabled ? "Stop voice" : "Start conversation", disabled: !session || !directory || !state.configured || pending || !!state.checking });
     stop.update({ disabled: !session || pending });
+    mic.update({ label: enabled && state.micMuted ? "Unmute mic" : "Mute mic", disabled: !enabled || pending });
+    speaker.update({ label: enabled && state.outputMuted ? "Unmute agent voice" : "Mute agent voice", disabled: !enabled || pending });
     check.update({ disabled: !session || !state.configured || pending || !!state.checking });
     if (state.error) node("notice").textContent = state.error;
     if (state.result) node("notice").textContent = state.result.ok ? "Speaker interruption passed." : "Speaker interruption failed: " + state.result.reason;
@@ -2152,6 +2154,8 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
   }
   var toggle = mountButton(node("actions"), { label: "Start conversation", disabled: true, onClick: () => change("/command", { command: state.enabled && state.sessionID === session?.id ? "off" : "on" }) });
   var stop = mountButton(node("actions"), { label: "Interrupt reply", variant: "secondary", disabled: true, onClick: () => change("/command", { command: "stop" }) });
+  var mic = mountButton(node("mutes"), { label: "Mute mic", variant: "outline", disabled: true, onClick: () => change("/command", { command: "mic", value: state.micMuted ? "on" : "off" }) });
+  var speaker = mountButton(node("mutes"), { label: "Mute agent voice", variant: "outline", disabled: true, onClick: () => change("/command", { command: "speaker", value: state.outputMuted ? "on" : "off" }) });
   var input = mountSelect(node("audio"), { label: "Microphone", value: "default", options: [], searchable: true, onChange: (inputDevice) => {
     input.update({ value: inputDevice });
     change("/devices", { inputDevice });

@@ -88,7 +88,7 @@ export class VoiceInput {
       this.preroll.push(frame);if(this.preroll.length>15)this.preroll.shift();this.voiced=voiced?this.voiced+1:0;
       if(this.voiced<8)return;
       this.callbacks.start?.();
-      const recognition=this.createRecognition(this.config,{partial:text=>this.callbacks.partial?.(text),error:e=>this.callbacks.error(e),done:text=>{
+      const recognition=this.createRecognition(this.config,{partial:text=>{if(this.recognition===recognition)this.callbacks.partial?.(text);},error:e=>{if(this.recognition===recognition)this.callbacks.error(e);},done:text=>{
         if(this.recognition!==recognition)return;this.recognition=null;this.waiting=false;this.voiced=0;this.silent=0;
         if(!this.closed&&text)this.callbacks.transcript(text);
         this.callbacks.idle?.();
@@ -99,6 +99,8 @@ export class VoiceInput {
       if(this.silent*20>=this.config.pauseMs||this.frames>=4500){this.waiting=true;this.recognition.end();}
     }
   }
+  /** Drop the utterance in progress (for a mic mute) and keep listening afterwards. */
+  discard(){const recognition=this.recognition;this.recognition=null;this.waiting=false;this.voiced=0;this.silent=0;this.frames=0;this.buffer=Buffer.alloc(0);this.preroll=[];if(recognition){recognition.cancel();this.callbacks.idle?.();}}
   stop(){this.closed=true;this.recognition?.cancel();this.recognition=null;this.buffer=Buffer.alloc(0);this.preroll=[];}
 }
 

@@ -9,7 +9,7 @@ import {selectOpenDevices} from './opencode-devices.mjs';
 import {registerOpenControl} from './openchamber-control.mjs';
 
 const ID='agent-voice';
-const USAGE='Voice commands: /voice on, off, dictate, read on|off, stop, duplex on|off, devices, input, output, status, test, check.';
+const USAGE='Voice commands: /voice on, off, dictate, read on|off, mic on|off, speaker on|off, stop, duplex on|off, devices, input, output, status, test, check.';
 
 export default {
   id:ID,
@@ -52,6 +52,10 @@ export default {
       }
       else if(command==='off'){const e=mine(id);e?.off();e?.say(host,'Voice off.');}
       else if(command==='stop'){mine(id)?.hush();await ctx.session.interrupt({sessionID:id,continue:false});await ctx.session.wait?.({sessionID:id});}
+      else if(command==='mic'||command==='speaker'){
+        const e=mine(id);if(!e?.enabled)throw new Error('Start voice before muting the '+(command==='mic'?'microphone':'agent voice')+'.');
+        if(command==='mic')e.setMicMuted(value==='off');else e.setOutputMuted(value==='off');
+      }
       else if(command==='read'){engine().setReadAloud(host,value!=='off');if(value!=='off')engine().say(host,'Reading replies aloud.');}
       else if(command==='duplex'){save({duplex:value==='on'});engine().say(host,config.duplex?'Spoken interruption on.':'Interruption off.');}
       else if(['devices','input','output'].includes(command)){
@@ -78,7 +82,7 @@ export default {
 
     await ctx.command.transform(commands=>commands.add({
       name:'voice',
-      description:'Voice conversation: on, off, dictate, read on|off, stop, duplex on|off, devices, input, output, status, test, check',
+      description:'Voice conversation: on, off, dictate, read on|off, mic on|off, speaker on|off, stop, duplex on|off, devices, input, output, status, test, check',
       execute:async({sessionID:id,prompt})=>{
         const [command,...rest]=(prompt?.text||'').trim().split(/\s+/).filter(Boolean);
         try{await run(command,rest.join(' ')||undefined,id);}
@@ -91,7 +95,7 @@ export default {
       session:async id=>{const result=await ctx.session.get({sessionID:id});return result.data??result;},
       configure:patch=>engine().configureDevices(patch),
       pause:message=>{mine()?.off();lastStatus=message;},
-      state:()=>({enabled:!!mine()?.enabled,sessionID:mine()?sessionID:null,phase:mine()?.phase||'off',status:lastStatus,error:lastError,inputDevice:config.inputDevice,outputDevice:config.outputDevice,configured:!!config.asrUrl&&!!config.ttsUrl}),
+      state:()=>({enabled:!!mine()?.enabled,sessionID:mine()?sessionID:null,phase:mine()?.phase||'off',micMuted:!!mine()?.micMuted,outputMuted:!!mine()?.outputMuted,status:lastStatus,error:lastError,inputDevice:config.inputDevice,outputDevice:config.outputDevice,configured:!!config.asrUrl&&!!config.ttsUrl}),
     });
 
     (async()=>{

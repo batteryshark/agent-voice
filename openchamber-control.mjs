@@ -50,7 +50,13 @@ export class OpenControlHub {
       }
       return {input:await listDeviceChoices(instance.config,'input'),output:await listDeviceChoices(instance.config,'output'),...instance.state()};
     }
-    if(method!=='POST'||endpoint!=='/command'||!['on','off','stop','check'].includes(input.command))throw new Error('Unknown voice control.');
+    if(method!=='POST'||endpoint!=='/command'||!['on','off','stop','check','mic','speaker'].includes(input.command))throw new Error('Unknown voice control.');
+    if(['mic','speaker'].includes(input.command)){
+      if(!['on','off'].includes(input.value))throw new Error('Unknown voice control.');
+      if(!this.lease||this.lease.clientID!==input.clientID)throw new Error('Voice is controlled by another panel.');
+      await instance.run(input.command,input.value,input.sessionID);
+      return instance.state();
+    }
     if(!input.sessionID)throw new Error('Open a chat before starting voice.');
     if(input.command==='check'&&this.checking)throw new Error('A voice check is already running.');
     if(input.command==='on'||input.command==='check'){

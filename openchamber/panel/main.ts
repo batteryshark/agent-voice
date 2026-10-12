@@ -3,7 +3,7 @@ import {applyHostReady,mountButton,mountSelect,mountSwitch} from '@openchamber/s
 import {voiceStatus,type VoicePhase} from './status';
 const host=connectHost(),clientID=crypto.randomUUID();
 type Choice={id:string;name:string};
-type State={enabled:boolean;sessionID:string|null;phase?:VoicePhase;status:string;error:string|null;inputDevice:string;outputDevice:string;configured:boolean;checking?:boolean;result?:{ok:boolean;reason?:string};input?:Choice[];output?:Choice[]};
+type State={enabled:boolean;sessionID:string|null;phase?:VoicePhase;micMuted?:boolean;outputMuted?:boolean;status:string;error:string|null;inputDevice:string;outputDevice:string;configured:boolean;checking?:boolean;result?:{ok:boolean;reason?:string};input?:Choice[];output?:Choice[]};
 let directory:string|null=null,session:{id:string;title?:string}|null=null,mounted=false,pending=false,refreshing=false,visible=true;
 let state:State={enabled:false,sessionID:null,status:'Microphone off',error:null,inputDevice:'default',outputDevice:'default',configured:false};
 let mutation=Promise.resolve();
@@ -27,7 +27,9 @@ function paint(){
   const status=voiceStatus(state,session?.id||null,starting&&(!enabled||state.phase==='off'));
   node('status').textContent=status.text;node('status').dataset.warming=String(status.warming);node('status').setAttribute('aria-busy',String(status.warming));
   toggle.update({label:enabled?'Stop voice':'Start conversation',disabled:!session||!directory||!state.configured||pending||!!state.checking});
-  stop.update({disabled:!session||pending});check.update({disabled:!session||!state.configured||pending||!!state.checking});
+  stop.update({disabled:!session||pending});
+  mic.update({label:enabled&&state.micMuted?'Unmute mic':'Mute mic',disabled:!enabled||pending});
+  speaker.update({label:enabled&&state.outputMuted?'Unmute agent voice':'Mute agent voice',disabled:!enabled||pending});check.update({disabled:!session||!state.configured||pending||!!state.checking});
   if(state.error)node('notice').textContent=state.error;
   if(state.result)node('notice').textContent=state.result.ok?'Speaker interruption passed.':'Speaker interruption failed: '+state.result.reason;
 }
@@ -42,6 +44,9 @@ function change(path:string,extra:object){
 }
 const toggle=mountButton(node('actions'),{label:'Start conversation',disabled:true,onClick:()=>change('/command',{command:state.enabled&&state.sessionID===session?.id?'off':'on'})});
 const stop=mountButton(node('actions'),{label:'Interrupt reply',variant:'secondary',disabled:true,onClick:()=>change('/command',{command:'stop'})});
+// Mutes keep the session, the other direction and the panel lease running.
+const mic=mountButton(node('mutes'),{label:'Mute mic',variant:'outline',disabled:true,onClick:()=>change('/command',{command:'mic',value:state.micMuted?'on':'off'})});
+const speaker=mountButton(node('mutes'),{label:'Mute agent voice',variant:'outline',disabled:true,onClick:()=>change('/command',{command:'speaker',value:state.outputMuted?'on':'off'})});
 const input=mountSelect(node('audio'),{label:'Microphone',value:'default',options:[],searchable:true,onChange:inputDevice=>{input.update({value:inputDevice});change('/devices',{inputDevice});}});
 const output=mountSelect(node('audio'),{label:'Output device',value:'default',options:[],searchable:true,onChange:outputDevice=>{output.update({value:outputDevice});change('/devices',{outputDevice});}});
 const check=mountButton(node('check'),{label:'Test speaker interruption',variant:'outline',disabled:true,onClick:()=>change('/command',{command:'check'})});

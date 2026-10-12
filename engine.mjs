@@ -48,7 +48,9 @@ export class VoiceEngine {
     this.config=config;this.save=save;this.host=null;this.enabled=false;this.readAloud=false;this.dictation=false;
     this.capture=null;this.input=null;this.speaker=null;this.audio=null;this.interruption=Promise.resolve();this.suppressOutput=false;this.captureEpoch=0;
     this.phase='off';this.acceptInput=false;
-    this.speech=new SpeechSegments(text=>{if(this.readAloud&&!this.suppressOutput)this.ensureSpeaker().enqueue(text);});
+    // Independent mutes: the session, capture device and playback keep running.
+    this.micMuted=false;this.outputMuted=false;
+    this.speech=new SpeechSegments(text=>{if(this.readAloud&&!this.suppressOutput&&!this.outputMuted)this.ensureSpeaker().enqueue(text);});
   }
   ensureAudio(){return this.audio??=new this.NativeAudio(this.config);}
   ensureSpeaker(){return this.speaker??=new Speaker(this.config,error=>{
@@ -77,7 +79,9 @@ export class VoiceEngine {
   state(){
     if(this.enabled&&this.phase==='warming-audio')return 'Warming up: connecting microphone and output…';
     if(this.enabled&&this.phase==='warming-speech')return 'Warming up: preparing speech…';
-    return this.enabled?(this.dictation?'Voice: dictating':'Voice: listening'):this.readAloud?'Voice: read-aloud':'Voice: off';
+    const muted=this.outputMuted?' (agent voice muted)':'';
+    if(this.enabled&&this.micMuted)return 'Voice: microphone muted'+muted;
+    return this.enabled?(this.dictation?'Voice: dictating':'Voice: listening')+muted:this.readAloud?'Voice: read-aloud'+muted:'Voice: off';
   }
   status(text=this.state()){this.host?.status(text);}
 
@@ -109,7 +113,7 @@ export class VoiceEngine {
       error:error=>{this.host?.error(error);this.halt();this.status();}
     });
     this.capture=this.platform==='darwin'?this.ensureAudio():new this.Capture(this.config);
-    this.onPCM=pcm=>{if(this.acceptInput)this.input?.push(pcm);};
+    this.onPCM=pcm=>{if(this.acceptInput&&!this.micMuted)this.input?.push(pcm);};
     this.onFailure=error=>{this.host?.error(new Error(micHint(error)));this.halt();this.status();};
     this.capture.on('pcm',this.onPCM);this.capture.on('failure',this.onFailure);
     try{if(this.platform==='darwin')await this.capture.start(true);else this.capture.start();}
@@ -135,7 +139,11 @@ export class VoiceEngine {
     else{this.readAloud=readAloud;this.status();}
   }
   stop(){this.halt();this.status();}
-  off(){this.readAloud=false;this.stop();}
+  off(){this.readAloud=false;this.micMuted=false;this.outputMuted=false;this.stop();}
+  /** Stop sending microphone audio without ending the session or its playback. */
+  setMicMuted(on){this.micMuted=!!on;if(this.micMuted)this.input?.discard();this.status();}
+  /** Silence spoken replies without turning off the microphone. */
+  setOutputMuted(on){this.outputMuted=!!on;if(this.outputMuted)this.hush();this.status();}
   setReadAloud(host,on){this.attach(host);this.readAloud=on;if(!on)this.speaker?.stop();this.status();}
   hush(){this.speaker?.stop();this.speech.reset();}
   /** Speak a short cue regardless of read-aloud (for hosts without a status line). */
@@ -177,7 +185,7 @@ export class VoiceEngine {
   assistantText(fullText){if(this.readAloud&&!this.suppressOutput)this.speech.update(fullText);}
   assistantEnd(ok=true){if(ok&&!this.suppressOutput)this.speech.flush(true);else this.speaker?.stop();this.speech.reset();}
 
-  async close(){this.halt();this.readAloud=false;this.host=null;await this.speaker?.close();this.speaker=null;this.audio?.close();this.audio=null;}
+  async close(){this.halt();this.readAloud=false;this.micMuted=false;this.outputMuted=false;this.host=null;await this.speaker?.close();this.speaker=null;this.audio?.close();this.audio=null;}
 }
 
 // One microphone per process: Pi under PiChamber runs a runtime per session in
