@@ -13,7 +13,7 @@ import {audioDevices} from './native-audio.mjs';
 // within onsetGraceMs of capture (re)starting. bargeInAborts also cancels the agent turn, as older versions did.
 export const defaults={asrUrl:'',ttsUrl:'',ttsModel:'tts-1',voice:'alloy',ttsStream:false,
   ffmpeg:'ffmpeg',ffplay:'ffplay',pauseMs:1100,threshold:0.012,duplex:process.platform==='darwin',inputDevice:'default',outputDevice:'default',
-  bargeInMs:320,onsetGraceMs:1200,bargeInAborts:false};
+  bargeInMs:320,onsetGraceMs:1200,bargeInAborts:false,echoCancellation:'auto'};
 
 // GUI-launched hosts (desktop apps, daemons) often lack Homebrew in PATH.
 export function resolveBinary(name,env=process.env,platform=process.platform){

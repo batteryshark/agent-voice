@@ -22,7 +22,9 @@ speakers ◀─ native audio / ffplay ◀─ WAV ◀─ /v1/audio/speech ◀─ 
 
 - **macOS audio:** a small audio helper runs as a child of the native Pi/OpenCode plugin. It
   captures the selected microphone and plays through the selected output device using the same
-  voice-processing engine, with echo cancellation. It has no window, focus watcher, or clipboard.
+  audio engine. With echo cancellation on, that is Apple's voice-processing engine; with it off, the
+  plain device input is converted to the same 16 kHz mono stream (see `echoCancellation`). It has no
+  window, focus watcher, or clipboard.
   Device choices use persistent CoreAudio IDs; a disconnected device produces an error.
   Bluetooth setup can briefly stop Apple's audio engine. Before reporting ready, the helper
   waits for live microphone frames and resets the engine and playback clock on the same confirmed route.
@@ -124,10 +126,41 @@ Pi reads `~/.pi/agent/agent-voice.json` (or `$PI_CODING_AGENT_DIR/agent-voice.js
 | `duplex` | `true` on macOS, `false` elsewhere | Allow spoken interruption during playback |
 | `bargeInMs` | `320` | Voiced speech (ms) within an utterance before it stops playback. A non-empty partial transcript also counts. `160` or less stops at onset |
 | `onsetGraceMs` | `1200` | Ignore speech onset for this long after capture starts or restarts |
+| `echoCancellation` | `auto` | macOS: `on` uses Apple's voice processing (echo cancellation) while the mic is live; `off` captures without it; `auto` turns it off when the output is headphones (Bluetooth / Bluetooth LE, or the built-in headphone jack) and on otherwise (built-in speakers, displays, external speakers). Decided each time capture starts |
 | `bargeInAborts` | `false` | Speaking also cancels the running agent turn before your words are sent (the earlier behaviour) |
 | `ffmpeg` / `ffplay` | found on `PATH` | Binary paths |
 
-`/voice devices`, `/voice input`, `/voice output`, and `/voice duplex` save their choices to this file.
+### Echo cancellation and headphones
+
+Apple's voice processing routes playback through call-style processing, which can make the agent's voice
+sound slightly muffled or ducked. With headphones there is no path from the speakers back into the mic,
+so `auto` turns it off there. Auto checks the selected (or system default) output device each time capture
+starts or devices change; plugging headphones into the built-in jack mid-session is picked up on the next
+start. If CoreAudio cannot be read, auto keeps echo cancellation on.
+
+Turning it `off` while playing through speakers lets the agent's own voice reach the mic. That can
+trigger barge-in and cut the reply short. Because barge-in only stops playback, it does not cancel the
+agent's work (unless `bargeInAborts` is on), but the reply may stop early and the echo can end up in your
+next transcript. Keep `on` or `auto` for speakers, or use `/voice duplex off` to mute the mic during playback.
+
+With echo cancellation off, the helper captures the microphone through its own input-only CoreAudio unit
+(AVAudioEngine shares one unit between input and output on macOS, so it cannot capture from a different
+device without voice processing), converts it to the same 16 kHz mono stream, and keeps playback on the
+selected output.
+
+The native helper (`bin/audio-macos`, not committed) is compiled from `native/audio.swift` the first time
+it is needed and again whenever the source is newer than the binary. To rebuild it by hand (for example
+after pulling a helper change, before restarting the app that runs the agent):
+
+```sh
+xcrun swiftc native/audio.swift -o bin/audio-macos -framework AVFoundation -framework CoreAudio \
+  -module-cache-path "${TMPDIR:-/tmp}/agent-voice-swift-cache"
+```
+
+A helper built before `echoCancellation` existed ignores the setting and always uses voice processing;
+`/voice status` then says it needs a rebuild.
+
+`/voice devices`, `/voice input`, `/voice output`, `/voice duplex`, and `/voice echo` save their choices to this file.
 Device changes restart active capture in place, preserving the voice mode. After editing it by hand, run
 `/reload` in the Pi TUI or restart the native backend for PiChamber/OpenChamber.
 
@@ -145,9 +178,10 @@ The same `/voice` command works in every host:
 | `/voice devices` | Choose microphone and output in the app's native selectors. |
 | `/voice input` / `/voice output` | Choose one direction in a native dialog, or append a device name or ID. |
 | `/voice duplex on` / `off` | Allow spoken interruption during playback / mute the mic during playback |
+| `/voice echo auto` / `on` / `off` | Set echo cancellation; restarts active capture |
 | `/voice test` | Speak a test sentence on the selected output device |
 | `/voice check` | Native speaker-interruption test: say the word shown in status while the sample plays. No speech is sent to the agent. |
-| `/voice status` | Show endpoints, microphone, FFmpeg path and settings file |
+| `/voice status` | Show endpoints, microphone, echo cancellation (setting and, while listening, whether it is on), FFmpeg path and settings file |
 
 Voice follows the session where you ran `/voice on`. Running it in another session moves the mic
 there. Each native backend owns one voice session; turn voice off before enabling it in the other app.
@@ -194,6 +228,8 @@ When the speech server lists its voices (`GET …/v1/voices` beside `/v1/audio/s
 them, plus **Server default**, which follows the server's own default. The choice is saved as `voice` in
 agent-voice.json and applies from the next sentence. **Preview voice** speaks a short line in it.
 The capture device stays open while the mic is muted, so the macOS microphone indicator stays on.
+**Echo cancellation** chooses Auto, On or Off; while voice runs, the selected option shows whether it is
+currently on and why. Changing it restarts capture in place.
 It uses OpenChamber's extension SDK and the native OpenCode plugin. It does not alter the composer draft.
 Changing chats pauses voice. Closing or disconnecting the panel releases audio within 5 seconds.
 Voice keeps running while the panel is hidden (another tab in front, such as a file the agent opens,
@@ -211,8 +247,8 @@ The panel then shows when to say the challenge word. Cancelling startup discards
 Microphone and output can be selected independently; a built-in microphone is worth trying if
 Bluetooth setup is slow, but the voice-processing engine itself also takes time to initialize.
 
-The panel ships prebuilt. To rebuild it after editing `openchamber/panel/main.ts`, use the matching
-`@openchamber/sdk@2.2.0` and its `openchamber-guest-bundle` command to produce `openchamber/panel/main.js`.
+The panel ships prebuilt. To rebuild it after editing `openchamber/panel/main.ts`, run `npm run build:panel`
+(esbuild against the installed `@openchamber/sdk`), which writes `openchamber/panel/main.js`.
 
 ## Development
 

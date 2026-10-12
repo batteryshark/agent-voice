@@ -7,7 +7,7 @@ import {listDeviceChoices} from './device-options.mjs';
 export const controlSocket=()=>path.join(homedir(),'.cache','agent-voice','openchamber.sock');
 
 export class OpenControlHub {
-  constructor({now=Date.now,leaseMs=5000}={}){this.instances=new Map();this.epochs=new Map();this.now=now;this.leaseMs=leaseMs;}
+  constructor({now=Date.now,leaseMs=5000,list=listDeviceChoices}={}){this.instances=new Map();this.epochs=new Map();this.now=now;this.leaseMs=leaseMs;this.list=list;}
   add(instance){this.instances.set(instance.directory,instance);return()=>{if(this.lease?.instance===instance)this.release('Voice paused because its native plugin closed.');if(this.instances.get(instance.directory)===instance)this.instances.delete(instance.directory);};}
   release(message){const lease=this.lease;this.lease=null;lease?.instance.pause(message);}
   expire(){if(this.lease&&this.now()>this.lease.until)this.release('Voice paused because the Voice panel disconnected.');}
@@ -42,13 +42,17 @@ export class OpenControlHub {
       if(method==='POST'){
         const patch={};
         for(const [key,direction] of [['inputDevice','input'],['outputDevice','output']])if(input[key]!==undefined){
-          const choices=await listDeviceChoices(instance.config,direction);
+          const choices=await this.list(instance.config,direction);
           if(!choices.some(choice=>choice.id===input[key]))throw new Error('That audio device is no longer connected. Refresh devices and choose again.');
           patch[key]=input[key];
         }
+        if(input.echoCancellation!==undefined){
+          if(!['auto','on','off'].includes(input.echoCancellation))throw new Error('Echo cancellation must be auto, on or off.');
+          patch.echoCancellation=input.echoCancellation;
+        }
         await instance.configure(patch);
       }
-      return {input:await listDeviceChoices(instance.config,'input'),output:await listDeviceChoices(instance.config,'output'),...instance.state()};
+      return {input:await this.list(instance.config,'input'),output:await this.list(instance.config,'output'),...instance.state()};
     }
     if(endpoint==='/voices'){
       const listing=await instance.voices();

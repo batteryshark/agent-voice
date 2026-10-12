@@ -6,7 +6,7 @@ import {homedir} from 'node:os';
 import path from 'node:path';
 import {defaults,devices,windowsMicrophones,AudioCapture,VoiceInput,Speaker,resolveBinary} from './voice.mjs';
 import {SpeechSegments} from './speech.mjs';
-import {MacAudio} from './native-audio.mjs';
+import {MacAudio,echoSetting} from './native-audio.mjs';
 
 export function loadConfig(files){
   const file=files.find(candidate=>existsSync(candidate))||files[0];
@@ -14,7 +14,7 @@ export function loadConfig(files){
   if(existsSync(file)){try{stored=JSON.parse(readFileSync(file,'utf8').replace(/^\uFEFF/,''));}catch{}}
   const config={...defaults,...stored};
   if(stored.inputDevice===undefined&&stored.device!==undefined)config.inputDevice=stored.device;
-  config.ffmpeg=resolveBinary(config.ffmpeg);config.ffplay=resolveBinary(config.ffplay);
+  config.ffmpeg=resolveBinary(config.ffmpeg);config.ffplay=resolveBinary(config.ffplay);config.echoCancellation=echoSetting(config.echoCancellation);
   // Persist only what the user set, so new defaults still reach them.
   const save=patch=>{Object.assign(stored,patch);Object.assign(config,patch);
     mkdirSync(path.dirname(file),{recursive:true});writeFileSync(file,JSON.stringify(stored,null,2)+'\n',{mode:0o600});};
@@ -22,6 +22,11 @@ export function loadConfig(files){
 }
 export const piConfigFile=()=>path.join(process.env.PI_CODING_AGENT_DIR||path.join(homedir(),'.pi','agent'),'agent-voice.json');
 export const opencodeConfigFile=()=>path.join(process.env.XDG_CONFIG_HOME||path.join(homedir(),'.config'),'opencode','agent-voice.json');
+
+export function echoText({setting,effective,reason}){
+  const detail=effective===null?'':setting==='auto'||effective!==(setting==='on')?` (${effective?'on':'off'}: ${reason})`:'';
+  return 'echo cancellation '+setting+detail;
+}
 
 export function micHint(error){
   const message=String(error?.message||error);
@@ -92,6 +97,12 @@ export class VoiceEngine {
     return this.enabled?(this.dictation?'Voice: dictating':'Voice: listening')+muted:this.readAloud?'Voice: read-aloud'+muted:'Voice: off';
   }
   status(text=this.state()){this.host?.status(text);}
+  /** {setting, effective, reason}. effective is null until capture starts on macOS, where auto is decided per output device. */
+  echoCancellation(){
+    const setting=echoSetting(this.config.echoCancellation);
+    if(this.platform!=='darwin')return {setting,effective:false,reason:'no echo cancellation on this platform'};
+    return this.enabled&&this.audio?.capture&&this.audio.echo?{...this.audio.echo}:{setting,effective:null,reason:'decided when voice starts'};
+  }
 
   /** Take the microphone and speaker for this host, releasing any previous owner. */
   attach(host){

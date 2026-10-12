@@ -17,6 +17,25 @@ export async function helperPath(){
  }
  return binary;
 }
+// echoCancellation: "auto" | "on" | "off" (booleans accepted). Unknown values fall back to auto.
+export const echoSetting=value=>value===true||value==='on'?'on':value===false||value==='off'?'off':'auto';
+// Auto turns Apple's voice processing off for headphones, where there is no speaker-to-mic echo path and the call-style
+// processing only muffles playback: Bluetooth / Bluetooth LE transports, or built-in output on its headphones data source.
+export function headphoneOutput(device){
+ if(['blue','blea'].includes(device?.transport))return 'Bluetooth output';
+ if(device?.transport==='bltn'&&device?.dataSource==='hdpn')return 'headphones';
+ return null;
+}
+export function selectedOutput(list,id='default'){
+ return Array.isArray(list)?list.find(device=>device.output&&(!id||id==='default'?device.defaultOutput:device.id===id||device.name===id)):undefined;
+}
+/** {setting, effective, reason}: effective is whether voice processing runs for capture on that output. */
+export function resolveEcho(value,list,outputId){
+ const setting=echoSetting(value);
+ if(setting!=='auto')return {setting,effective:setting==='on',reason:'setting'};
+ const headphones=headphoneOutput(selectedOutput(list,outputId));
+ return {setting,effective:!headphones,reason:headphones||'speakers'};
+}
 export async function audioDevices(){const binary=await helperPath();const {stdout}=await run(binary,['--devices'],{timeout:5000,maxBuffer:1024*1024});return JSON.parse(stdout);}
 
 export function decodeWave(config,wave,signal){return new Promise((resolve,reject)=>{
@@ -70,7 +89,14 @@ export class MacAudio extends EventEmitter {
   this.close();this.capture=capture;const epoch=this.epoch;
   const binary=await helperPath();
   if(this.epoch!==epoch)throw new Error('Audio startup cancelled');
-  const args=['--input',this.config.inputDevice||this.config.device||'default','--output',this.config.outputDevice||'default',...(capture?['--capture']:[])];
+  // Decided each time capture starts, so a device change re-evaluates auto.
+  if(capture){
+   const setting=echoSetting(this.config.echoCancellation),list=setting==='auto'?await audioDevices().catch(()=>null):null;
+   this.echo=resolveEcho(setting,list,this.config.outputDevice);
+   if(this.epoch!==epoch)throw new Error('Audio startup cancelled');
+  }
+  const args=['--input',this.config.inputDevice||this.config.device||'default','--output',this.config.outputDevice||'default',
+   ...(capture?['--capture','--echo-cancellation',this.echo.effective?'on':'off']:[])];
   const child=this.child=spawn(binary,args,{stdio:['pipe','pipe','pipe']});
   child.stderr.resume();child.stdin.on('error',()=>{});
   const lines=createInterface({input:child.stdout});
@@ -84,7 +110,9 @@ export class MacAudio extends EventEmitter {
     if(child!==this.child)return;
     let event;try{event=JSON.parse(line);}catch{return failure(new Error('Native audio protocol failed'));}
     if(event.type==='ready'){
-     if(capture&&event.echoCancellation!==true)return failure(new Error('Echo cancellation is unavailable'));
+     if(capture&&this.echo.effective&&event.echoCancellation!==true)return failure(new Error('Echo cancellation is unavailable'));
+     // A helper built before this setting ignores the flag and always runs voice processing.
+     if(capture&&!this.echo.effective&&event.echoCancellation===true)this.echo={...this.echo,effective:true,reason:'the native helper predates this setting; rebuild bin/audio-macos'};
      clearTimeout(timer);settled=true;this.rejectReady=null;this.format=event;resolve(event);
     }
     if(event.type==='error')failure(new Error(event.message));

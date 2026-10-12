@@ -3,13 +3,13 @@
 // No imports from @opencode/plugin: plugins load from bare directories.
 import {devices,listVoices} from './voice.mjs';
 import {listDeviceChoices,resolveDeviceChoice} from './device-options.mjs';
-import {VoiceEngine,loadConfig,opencodeConfigFile,piConfigFile,shared} from './engine.mjs';
+import {VoiceEngine,echoText,loadConfig,opencodeConfigFile,piConfigFile,shared} from './engine.mjs';
 import {openChamberNotice} from './openchamber-notice.mjs';
 import {selectOpenDevices} from './opencode-devices.mjs';
 import {registerOpenControl} from './openchamber-control.mjs';
 
 const ID='agent-voice';
-const USAGE='Voice commands: /voice on, off, dictate, read on|off, mic on|off, speaker on|off, stop, duplex on|off, devices, input, output, status, test, check.';
+const USAGE='Voice commands: /voice on, off, dictate, read on|off, mic on|off, speaker on|off, stop, duplex on|off, echo auto|on|off, devices, input, output, status, test, check.';
 
 export default {
   id:ID,
@@ -60,6 +60,10 @@ export default {
       }
       else if(command==='read'){engine().setReadAloud(host,value!=='off');if(value!=='off')engine().say(host,'Reading replies aloud.');}
       else if(command==='duplex'){save({duplex:value==='on'});engine().say(host,config.duplex?'Spoken interruption on.':'Interruption off.');}
+      else if(command==='echo'){
+        if(!['auto','on','off'].includes(value))return notice('Use /voice echo auto, on or off.');
+        await engine().configureDevices({echoCancellation:value});await notice('Voice '+echoText(engine().echoCancellation())+'.');
+      }
       else if(['devices','input','output'].includes(command)){
         const directions=command==='devices'?['input','output']:[command];
         if(!value&&ctx.session.form){
@@ -76,7 +80,7 @@ export default {
           }else await notice((direction==='input'?'Microphones':'Output devices')+' — choose with /voice '+direction+' <name>:\n'+choices.map(choice=>choice.name).join('\n'));
         }
       }
-      else if(command==='status')await notice(`${mine()?lastStatus:'Voice: off'}; microphone ${config.inputDevice||config.device||'default'}; output ${config.outputDevice||'default'}; duplex ${config.duplex}; settings ${file}.`);
+      else if(command==='status')await notice(`${mine()?lastStatus:'Voice: off'}; microphone ${config.inputDevice||config.device||'default'}; output ${config.outputDevice||'default'}; duplex ${config.duplex}; ${echoText(engine().echoCancellation())}; settings ${file}.`);
       else if(command==='check'){lastError=null;void notice('Voice check is warming up. Wait until you hear the sample, then say pineapple. The microphone turns off after this check.');const result=await engine().check(host);await notice(result.ok?'Voice check passed: spoken interruption detected.':'Voice check failed: '+result.reason);return result;}
       else if(command==='test'){engine().test(host);}
       else if(command==='preview'){engine().say(host,value||'Your voice connection is ready.');}
@@ -85,7 +89,7 @@ export default {
 
     await ctx.command.transform(commands=>commands.add({
       name:'voice',
-      description:'Voice conversation: on, off, dictate, read on|off, mic on|off, speaker on|off, stop, duplex on|off, devices, input, output, status, test, check',
+      description:'Voice conversation: on, off, dictate, read on|off, mic on|off, speaker on|off, stop, duplex on|off, echo auto|on|off, devices, input, output, status, test, check',
       execute:async({sessionID:id,prompt})=>{
         const [command,...rest]=(prompt?.text||'').trim().split(/\s+/).filter(Boolean);
         try{await run(command,rest.join(' ')||undefined,id);}
@@ -101,7 +105,7 @@ export default {
       voices:()=>listVoices(config),
       setVoice:voice=>save({voice}),
       pause:message=>{mine()?.off();lastStatus=message;},
-      state:()=>({enabled:!!mine()?.enabled,sessionID:mine()?sessionID:null,phase:mine()?.phase||'off',micMuted:!!mine()?.micMuted,outputMuted:!!mine()?.outputMuted,status:lastStatus,error:lastError,inputDevice:config.inputDevice,outputDevice:config.outputDevice,configured:!!config.asrUrl&&!!config.ttsUrl}),
+      state:()=>({enabled:!!mine()?.enabled,sessionID:mine()?sessionID:null,phase:mine()?.phase||'off',micMuted:!!mine()?.micMuted,outputMuted:!!mine()?.outputMuted,echoCancellation:mine()?.echoCancellation()||{setting:config.echoCancellation,effective:null,reason:'decided when voice starts'},status:lastStatus,error:lastError,inputDevice:config.inputDevice,outputDevice:config.outputDevice,configured:!!config.asrUrl&&!!config.ttsUrl}),
     });
 
     (async()=>{

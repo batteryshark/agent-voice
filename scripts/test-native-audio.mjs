@@ -6,7 +6,7 @@ import {MacAudio} from '../native-audio.mjs';
 import {loadConfig,opencodeConfigFile,piConfigFile} from '../engine.mjs';
 if(process.platform!=='darwin')throw new Error('This hardware check requires macOS.');
 const args=process.argv.slice(2),{config}=loadConfig([opencodeConfigFile(),piConfigFile()]);
-for(const [flag,key] of [['--input','inputDevice'],['--output','outputDevice']]){const index=args.indexOf(flag);if(index>=0)config[key]=args[index+1];}
+for(const [flag,key] of [['--input','inputDevice'],['--output','outputDevice'],['--echo','echoCancellation']]){const index=args.indexOf(flag);if(index>=0)config[key]=args[index+1];}
 const capture=!args.includes('--output-only'),audio=new MacAudio(config);let frames=0,failure=null;
 audio.on('pcm',()=>frames++);audio.on('failure',error=>failure=error);
 function tone(seconds){
@@ -27,5 +27,5 @@ try{
  assert(Date.now()-stopped<1000,'Spoken-reply playback did not stop promptly');
  await delay(350);assert.equal(failure,null);
  if(capture)assert(frames>before,'Stopping playback also stopped the microphone');
- console.log(JSON.stringify({ok:true,microphoneFrames:frames,playbackCompleted:true,playbackStopped:true,echoCancellation:audio.format.echoCancellation}));
+ console.log(JSON.stringify({ok:true,microphoneFrames:frames,playbackCompleted:true,playbackStopped:true,echoCancellation:audio.format.echoCancellation,echo:audio.echo}));
 }finally{clearTimeout(timer);audio.close();}
