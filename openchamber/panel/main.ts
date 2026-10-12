@@ -8,11 +8,11 @@ let directory:string|null=null,session:{id:string;title?:string}|null=null,mount
 let state:State={enabled:false,sessionID:null,status:'Microphone off',error:null,inputDevice:'default',outputDevice:'default',configured:false};
 let mutation=Promise.resolve();
 let starting=false;
-// Opt-in: keep voice running while this panel is hidden behind another tab,
+// On by default: keep voice running while this panel is hidden behind another tab,
 // in a closed zone, or in a minimized window. Closing the Voice tab itself
 // still releases audio, because the heartbeat stops with the page.
 const KEEP_KEY='keepRunningHidden';
-let keepRunning=false;
+let keepRunning=true;
 const node=(id:string)=>{const element=document.getElementById(id);if(!element)throw new Error('Missing Voice panel control');return element;};
 const notice=(error:Error)=>{node('notice').textContent=error.message;};
 async function request(path:string,method:'GET'|'POST'='GET',extra:object={}){
@@ -51,8 +51,8 @@ const input=mountSelect(node('audio'),{label:'Microphone',value:'default',option
 const output=mountSelect(node('audio'),{label:'Output device',value:'default',options:[],searchable:true,onChange:outputDevice=>{output.update({value:outputDevice});change('/devices',{outputDevice});}});
 const check=mountButton(node('check'),{label:'Test speaker interruption',variant:'outline',disabled:true,onClick:()=>change('/command',{command:'check'})});
 mountButton(node('check'),{label:'Refresh devices',variant:'ghost',onClick:()=>{void devices();}});
-const keep=mountSwitch(node('background'),{label:'Keep running when hidden',checked:false,description:'Voice continues while you look at other panels or the agent opens a file. Closing the Voice tab still stops it.',onChange:checked=>{keepRunning=checked;keep.update({checked});void host.storage.set(KEEP_KEY,checked).catch(()=>{});}});
-void host.storage.get(KEEP_KEY).then(value=>{keepRunning=value===true;keep.update({checked:keepRunning});}).catch(()=>{});
+const keep=mountSwitch(node('background'),{label:'Keep running when hidden',checked:true,description:'Voice continues while you look at other panels or the agent opens a file. Closing the Voice tab still stops it.',onChange:checked=>{keepRunning=checked;keep.update({checked});void host.storage.set(KEEP_KEY,checked).catch(()=>{});}});
+void host.storage.get(KEEP_KEY).then(value=>{keepRunning=value!==false;keep.update({checked:keepRunning});}).catch(()=>{});
 async function devices(){
   try{state=await request('/devices');input.update({value:state.inputDevice,options:(state.input||[]).map(item=>({id:item.id,label:item.name}))});output.update({value:state.outputDevice,options:(state.output||[]).map(item=>({id:item.id,label:item.name}))});paint();}
   catch(error){notice(error instanceof Error?error:new Error('Audio devices are unavailable'));}

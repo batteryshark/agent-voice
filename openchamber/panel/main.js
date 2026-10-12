@@ -2097,7 +2097,7 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
   var mutation = Promise.resolve();
   var starting = false;
   var KEEP_KEY = "keepRunningHidden";
-  var keepRunning = false;
+  var keepRunning = true;
   var node = (id) => {
     const element = document.getElementById(id);
     if (!element) throw new Error("Missing Voice panel control");
@@ -2168,14 +2168,14 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
   mountButton(node("check"), { label: "Refresh devices", variant: "ghost", onClick: () => {
     void devices();
   } });
-  var keep = mountSwitch(node("background"), { label: "Keep running when hidden", checked: false, description: "Voice continues while you look at other panels or the agent opens a file. Closing the Voice tab still stops it.", onChange: (checked) => {
+  var keep = mountSwitch(node("background"), { label: "Keep running when hidden", checked: true, description: "Voice continues while you look at other panels or the agent opens a file. Closing the Voice tab still stops it.", onChange: (checked) => {
     keepRunning = checked;
     keep.update({ checked });
     void host.storage.set(KEEP_KEY, checked).catch(() => {
     });
   } });
   void host.storage.get(KEEP_KEY).then((value) => {
-    keepRunning = value === true;
+    keepRunning = value !== false;
     keep.update({ checked: keepRunning });
   }).catch(() => {
   });

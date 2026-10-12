@@ -179,9 +179,10 @@ In any opencode client, `/voice mic off|on` and `/voice speaker off|on` do the s
 The capture device stays open while the mic is muted, so the macOS microphone indicator stays on.
 It uses OpenChamber's extension SDK and the native OpenCode plugin. It does not alter the composer draft.
 Changing chats pauses voice. Closing or disconnecting the panel releases audio within 5 seconds.
-By default, hiding the panel (another tab in front, such as a file the agent opens, or a closed zone)
-also pauses voice. Turn on **Keep running when hidden** to keep talking while you look at other panels;
-closing the Voice tab itself still releases audio within 5 seconds.
+Voice keeps running while the panel is hidden (another tab in front, such as a file the agent opens,
+or a closed zone), so you can keep talking while you look at other panels. Turn off **Keep running when
+hidden** to pause voice whenever the panel is out of sight. Closing the Voice tab itself still releases
+audio within 5 seconds.
 The microphone starts off. Extension service requests travel over a private local socket; approvals stay
 in OpenChamber's usual interface. The panel's speech test turns the microphone off afterward.
 
