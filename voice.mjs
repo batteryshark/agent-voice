@@ -8,7 +8,8 @@ import {WebSocket} from 'ws';
 import {audioDevices} from './native-audio.mjs';
 
 // asrUrl: streaming recognition websocket; ttsUrl: OpenAI-compatible /v1/audio/speech.
-export const defaults={asrUrl:'',ttsUrl:'',ttsModel:'tts-1',voice:'alloy',
+// ttsStream: request raw PCM (response_format "pcm") and play it as it arrives (macOS native audio only).
+export const defaults={asrUrl:'',ttsUrl:'',ttsModel:'tts-1',voice:'alloy',ttsStream:false,
   ffmpeg:'ffmpeg',ffplay:'ffplay',pauseMs:1100,threshold:0.012,duplex:process.platform==='darwin',inputDevice:'default',outputDevice:'default'};
 
 // GUI-launched hosts (desktop apps, daemons) often lack Homebrew in PATH.
@@ -111,6 +112,32 @@ export async function synthesize(config,text,signal) {
   if(!response.ok)throw new Error(`Speech service returned ${response.status}: ${(await response.text()).slice(0,200)}`);
   return Buffer.from(await response.arrayBuffer());
 }
+/** Raw s16le mono PCM from a streaming speech endpoint. The body is read eagerly, so generation never waits on
+ * playback; chunks queue in memory. `finished` settles (never rejects) once the body is done or failed. */
+export class PcmStream {
+  constructor(body,{sampleRate=24000}={}){this.sampleRate=sampleRate;this.queue=[];this.ended=false;this.error=null;this.notify=null;this.finished=this.read(body.getReader());}
+  async read(reader){
+    try{for(;;){const {done,value}=await reader.read();if(done)break;this.queue.push(Buffer.from(value.buffer,value.byteOffset,value.byteLength));this.notify?.();}}
+    catch(error){this.error=error;}
+    finally{this.ended=true;this.notify?.();}
+  }
+  async *[Symbol.asyncIterator](){
+    for(;;){
+      if(this.queue.length){yield this.queue.shift();continue;}
+      if(this.ended){if(this.error)throw this.error;return;}
+      await new Promise(resolve=>this.notify=resolve);this.notify=null;
+    }
+  }
+}
+export async function synthesizeStream(config,text,signal) {
+  if(!config.ttsUrl)throw new Error('Set "ttsUrl" in agent-voice.json (see /voice status).');
+  const headers={'Content-Type':'application/json'};if(config.ttsApiKey)headers.Authorization='Bearer '+config.ttsApiKey;
+  const response=await fetch(config.ttsUrl,{method:'POST',headers,body:JSON.stringify({model:config.ttsModel,voice:config.voice,input:text,response_format:'pcm'}),signal});
+  if(!response.ok)throw new Error(`Speech service returned ${response.status}: ${(await response.text()).slice(0,200)}`);
+  const type=response.headers.get('content-type')||'';
+  if(/wav|mpeg|json|text/i.test(type)){response.body?.cancel().catch(()=>{});throw new Error(`Speech service sent ${type}, not raw PCM; set "ttsStream": false.`);}
+  return new PcmStream(response.body,{sampleRate:Number(response.headers.get('x-sample-rate'))||24000});
+}
 export function playFile(config,file,onChild,onPlaying=()=>{}){
   const command=process.platform==='darwin'?'afplay':config.ffplay;
   const args=process.platform==='darwin'?[file]:['-nodisp','-autoexit','-loglevel','error',file];
@@ -121,12 +148,16 @@ export function playFile(config,file,onChild,onPlaying=()=>{}){
   });
 }
 export class Speaker {
-  constructor(config,onError=()=>{},options={}){this.config=config;this.onError=onError;this.synth=options.synth||synthesize;this.play=options.play||playFile;this.playAudio=options.playAudio;this.queue=[];this.controllers=new Set();this.epoch=0;this.playing=false;}
+  constructor(config,onError=()=>{},options={}){this.config=config;this.onError=onError;this.synth=options.synth||synthesize;this.synthStream=options.synthStream||synthesizeStream;this.play=options.play||playFile;this.playAudio=options.playAudio;this.playStream=options.playStream;this.queue=[];this.controllers=new Set();this.epoch=0;this.playing=false;}
+  get streaming(){return !!(this.config.ttsStream&&this.playStream);}
   // Start synthesis while the selected devices initialize. The ticket stays in
   // memory, shares normal cancellation, and is only queued once audio is ready.
+  // A streamed reply keeps its abort controller until the whole body has arrived.
   prefetch(text){
     const abort=new AbortController();this.controllers.add(abort);
-    const promise=this.synth(this.config,text,abort.signal).finally(()=>this.controllers.delete(abort));promise.catch(()=>{});
+    const promise=(this.streaming?this.synthStream:this.synth)(this.config,text,abort.signal);
+    const release=()=>this.controllers.delete(abort);
+    promise.then(audio=>audio?.finished?audio.finished.finally(release):release(),release);
     return {text,epoch:this.epoch,promise};
   }
   enqueue(text,{prepared,onPlaying}={}){if(!text.trim())return;this.queue.push({...prepared,text,epoch:prepared?.epoch??this.epoch,onPlaying});this.prepare();this.startPump();}
@@ -139,7 +170,11 @@ export class Speaker {
         const audio=await item.promise;
         if(item.epoch!==this.epoch)continue;
         this.prepared=null;this.prepare();
-        if(this.playAudio){
+        if(audio instanceof PcmStream){
+          this.playing=true;
+          try{await this.playStream(this.config,audio,child=>this.player=child,()=>{if(item.epoch===this.epoch)item.onPlaying?.();});}
+          finally{this.playing=false;this.player=null;}
+        }else if(this.playAudio){
           this.playing=true;
           try{await this.playAudio(this.config,audio,child=>this.player=child,()=>{if(item.epoch===this.epoch)item.onPlaying?.();});}
           finally{this.playing=false;this.player=null;}

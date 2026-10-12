@@ -32,6 +32,37 @@ export function decodeWave(config,wave,signal){return new Promise((resolve,rejec
  child.stdin.end(wave);
 });}
 
+// The helper plays 48 kHz mono float32. Streamed speech is usually 24 kHz s16le (OpenAI's pcm format), so it is
+// upsampled 2x with a 63-tap Blackman-windowed half-band filter: even outputs are the input samples, odd outputs
+// interpolate from 32 neighbours. 16 input samples (0.7 ms) of delay; state carries across chunks.
+const HALF=16,TAPS=(()=>{const c=[];for(let j=-HALF;j<HALF;j++){const k=2*j+1,x=k/2,m=2*HALF;
+  c.push(Math.sin(Math.PI*x)/(Math.PI*x)*(0.42+0.5*Math.cos(Math.PI*k/m)+0.08*Math.cos(2*Math.PI*k/m)));}
+  const sum=c.reduce((a,b)=>a+b,0);return Float64Array.from(c,v=>v/sum);})();
+export class PcmToFloat48 {
+  constructor(sampleRate){
+    if(sampleRate!==24000&&sampleRate!==48000)throw new Error(`Unsupported speech sample rate ${sampleRate}`);
+    this.double=sampleRate===24000;this.carry=null;this.history=new Float32Array(2*HALF-1);this.skip=HALF;
+  }
+  samples(chunk){
+    if(this.carry){chunk=Buffer.concat([this.carry,chunk]);this.carry=null;}
+    if(chunk.length%2){this.carry=chunk.subarray(chunk.length-1);chunk=chunk.subarray(0,chunk.length-1);}
+    const x=new Float32Array(chunk.length/2);for(let i=0;i<x.length;i++)x[i]=chunk.readInt16LE(i*2)/32768;return x;
+  }
+  upsample(x){
+    const h=this.history.length,ext=new Float32Array(h+x.length);ext.set(this.history);ext.set(x,h);
+    const out=new Float32Array(2*x.length);let n=0;
+    for(let t=h;t<ext.length;t++){
+      if(this.skip>0){this.skip--;continue;}
+      const p=t-HALF;let odd=0;for(let j=-HALF;j<HALF;j++)odd+=TAPS[j+HALF]*ext[p-j];
+      out[n++]=ext[p];out[n++]=odd;
+    }
+    this.history=ext.slice(ext.length-h);
+    return Buffer.from(out.buffer,0,n*4);
+  }
+  push(chunk){const x=this.samples(chunk);return this.double?this.upsample(x):Buffer.from(x.buffer);}
+  flush(){return this.double?this.upsample(new Float32Array(HALF)):Buffer.alloc(0);}  // emits the delayed tail
+}
+
 export class MacAudio extends EventEmitter {
  constructor(config){super();this.config=config;this.next=0;this.acks=new Map();this.capture=false;this.epoch=0;}
  async start(capture){
@@ -75,6 +106,27 @@ export class MacAudio extends EventEmitter {
   await new Promise((resolve,reject)=>{
    const timeout=setTimeout(()=>{this.acks.delete(id);reject(new Error('Selected output device stopped playing'));},Math.ceil(pcm.length/4/48000*1000)+5000);
    this.acks.set(id,{onPlaying,resolve:()=>{clearTimeout(timeout);resolve();}});this.command({type:'play',id,data:pcm.toString('base64')});
+  });
+ }
+ // Schedule streamed PCM chunk by chunk: the native player queues buffers back to back, so playback starts with
+ // the first chunk and continues while the rest is still being generated.
+ async playStream(config,stream,onPlayer,onPlaying=()=>{}){
+  const controller=new AbortController();onPlayer({kill:()=>{controller.abort();this.stopPlayback();}});
+  await this.start(false);
+  if(controller.signal.aborted)return;
+  const convert=new PcmToFloat48(stream.sampleRate),pending=[],ids=[];let seconds=0,first=true;const t0=Date.now();
+  const send=pcm=>{
+   if(!pcm.length||controller.signal.aborted)return;
+   const id=++this.next;ids.push(id);seconds+=pcm.length/4/48000;
+   pending.push(new Promise(resolve=>this.acks.set(id,{onPlaying:first?onPlaying:null,resolve})));first=false;
+   this.command({type:'play',id,data:pcm.toString('base64')});
+  };
+  for await(const chunk of stream){if(controller.signal.aborted)return;send(convert.push(chunk));}
+  if(controller.signal.aborted)return;
+  send(convert.flush());
+  await new Promise((resolve,reject)=>{
+   const timeout=setTimeout(()=>{for(const id of ids)this.acks.delete(id);reject(new Error('Selected output device stopped playing'));},Math.max(0,seconds*1000-(Date.now()-t0))+5000);
+   Promise.all(pending).then(()=>{clearTimeout(timeout);resolve();});
   });
  }
  stopPlayback(){this.command({type:'stop'});for(const ack of this.acks.values())ack.resolve();this.acks.clear();}

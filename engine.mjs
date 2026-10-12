@@ -56,7 +56,7 @@ export class VoiceEngine {
   ensureSpeaker(){return this.speaker??=new Speaker(this.config,error=>{
     if(this.phase==='warming-speech'){this.phase='listening';this.status();}
     this.host?.error(error);
-  },this.platform==='darwin'?{playAudio:(...args)=>this.ensureAudio().play(...args)}:{});}
+  },this.platform==='darwin'?{playAudio:(...args)=>this.ensureAudio().play(...args),playStream:(...args)=>this.ensureAudio().playStream(...args)}:{});}
   interrupt(){
     this.speaker?.stop();this.speech.reset();this.suppressOutput=true;
     if(this.phase==='warming-speech')this.phase='listening';

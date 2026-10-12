@@ -32,7 +32,8 @@ speakers ◀─ native audio / ffplay ◀─ WAV ◀─ /v1/audio/speech ◀─ 
 - **Recognition:** each utterance streams to a websocket speech-to-text server.
 - **Speech:** reply text is cleaned for speaking (code blocks, links and markdown are dropped) and split
   into sentences. Each sentence goes to an OpenAI-compatible `/v1/audio/speech` endpoint as WAV, and the
-  next sentence is fetched while the current one plays. macOS converts the WAV to PCM in memory.
+  next sentence is fetched while the current one plays. macOS converts the WAV to PCM in memory. With
+  `ttsStream`, macOS instead requests raw PCM and schedules each chunk on the native player as it arrives.
 - **Interruption:** macOS keeps the mic live during playback by default, with echo cancellation.
   Starting speech stops audio immediately, cancels the native agent turn, and waits for cancellation
   before submitting the new utterance. Late text from the interrupted reply stays silent.
@@ -105,6 +106,7 @@ Pi reads `~/.pi/agent/agent-voice.json` (or `$PI_CODING_AGENT_DIR/agent-voice.js
 | `asrUrl` | (required) | Recognition websocket |
 | `ttsUrl` | (required) | OpenAI-compatible speech endpoint |
 | `ttsModel` / `voice` | `tts-1` / `alloy` | Sent to the speech endpoint |
+| `ttsStream` | `false` | macOS: request `response_format: "pcm"` and play each chunk as it arrives instead of waiting for the whole WAV. Needs a server that streams raw PCM (OpenAI's pcm format, 24 kHz s16le) |
 | `asrApiKey` / `ttsApiKey` | none | Sent as `Authorization: Bearer …` |
 | `pauseMs` | `1100` | Silence that ends an utterance |
 | `threshold` | `0.012` | RMS level that counts as speech |
