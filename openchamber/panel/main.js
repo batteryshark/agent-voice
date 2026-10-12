@@ -2200,6 +2200,7 @@ ${GUEST_UI_LOOK_CSS}`;
     speaker.update({ label: enabled && state.outputMuted ? "Unmute agent voice" : "Mute agent voice", disabled: !enabled || pending });
     check.update({ disabled: !session || !state.configured || pending || !!state.checking });
     paintVoices();
+    paintEcho();
     if (state.error) node("notice").textContent = state.error;
     if (state.result) node("notice").textContent = state.result.ok ? "Speaker interruption passed." : "Speaker interruption failed: " + state.result.reason;
   }
@@ -2238,6 +2239,19 @@ ${GUEST_UI_LOOK_CSS}`;
     output.update({ value: outputDevice });
     change("/devices", { outputDevice });
   } });
+  var echo = mountSelect(node("audio"), { label: "Echo cancellation", value: "auto", options: [], onChange: (echoCancellation) => {
+    echo.update({ value: echoCancellation });
+    change("/devices", { echoCancellation });
+  } });
+  function paintEcho() {
+    const current = state.echoCancellation, now = current && current.effective !== null ? `now ${current.effective ? "on" : "off"}` : "";
+    const hint = (id) => current?.setting === id && now ? { hint: id === "auto" ? `${now}: ${current.reason}` : now } : {};
+    echo.update({ value: current?.setting || "auto", disabled: pending, options: [
+      { id: "auto", label: "Auto (off for headphones)", ...hint("auto") },
+      { id: "on", label: "On", ...hint("on") },
+      { id: "off", label: "Off", ...hint("off") }
+    ] });
+  }
   var check = mountButton(node("check"), { label: "Test speaker interruption", variant: "outline", disabled: true, onClick: () => change("/command", { command: "check" }) });
   mountButton(node("check"), { label: "Refresh devices", variant: "ghost", onClick: () => {
     void devices();
