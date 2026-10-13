@@ -153,7 +153,7 @@ it is needed and again whenever the source is newer than the binary. To rebuild 
 after pulling a helper change, before restarting the app that runs the agent):
 
 ```sh
-xcrun swiftc native/audio.swift -o bin/audio-macos -framework AVFoundation -framework CoreAudio \
+xcrun swiftc native/audio.swift -o bin/audio-macos -target "$(uname -m)-apple-macos13" -framework AVFoundation -framework CoreAudio \
   -module-cache-path "${TMPDIR:-/tmp}/agent-voice-swift-cache"
 ```
 

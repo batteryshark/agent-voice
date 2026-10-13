@@ -7,12 +7,15 @@ import {createInterface} from 'node:readline';
 import path from 'node:path';
 const run=promisify(execFile);
 const root=fileURLToPath(new URL('./',import.meta.url));
+// Build against a fixed minimum macOS so APIs deprecated in newer SDKs stay usable (and quiet)
+// on every supported release.
+export const SWIFT_TARGET=`${process.arch==='x64'?'x86_64':'arm64'}-apple-macos13`;
 export async function helperPath(){
  const source=path.join(root,'native/audio.swift'),binary=path.join(root,'bin/audio-macos');
  let binaryTime=0;try{binaryTime=(await stat(binary)).mtimeMs;}catch{}
  if(binaryTime<(await stat(source)).mtimeMs){
   await mkdir(path.dirname(binary),{recursive:true});
-  try{await run('/usr/bin/xcrun',['swiftc',source,'-o',binary,'-framework','AVFoundation','-framework','CoreAudio','-module-cache-path',path.join(process.env.TMPDIR||'/tmp','agent-voice-swift-cache')],{timeout:60000,maxBuffer:1024*1024});}
+  try{await run('/usr/bin/xcrun',['swiftc',source,'-o',binary,'-target',SWIFT_TARGET,'-framework','AVFoundation','-framework','CoreAudio','-module-cache-path',path.join(process.env.TMPDIR||'/tmp','agent-voice-swift-cache')],{timeout:60000,maxBuffer:1024*1024});}
   catch{throw new Error('Could not build native audio. Install Xcode Command Line Tools, then reload voice.');}
  }
  return binary;

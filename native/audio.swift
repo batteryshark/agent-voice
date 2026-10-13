@@ -11,9 +11,9 @@ struct AudioDeviceChoice {
 }
 func audioString(_ id: AudioDeviceID, _ selector: AudioObjectPropertySelector) -> String {
     var address=AudioObjectPropertyAddress(mSelector:selector,mScope:kAudioObjectPropertyScopeGlobal,mElement:kAudioObjectPropertyElementMain)
-    var size=UInt32(MemoryLayout<CFString?>.size),value: CFString?
-    guard AudioObjectGetPropertyData(id,&address,0,nil,&size,&value)==noErr else { return "" }
-    return value as String? ?? ""
+    var size=UInt32(MemoryLayout<Unmanaged<CFString>?>.size),value: Unmanaged<CFString>?
+    guard AudioObjectGetPropertyData(id,&address,0,nil,&size,&value)==noErr,let string=value?.takeRetainedValue() else { return "" }
+    return string as String
 }
 func audioDevices() -> [AudioDeviceChoice] {
     var address=AudioObjectPropertyAddress(mSelector:kAudioHardwarePropertyDevices,mScope:kAudioObjectPropertyScopeGlobal,mElement:kAudioObjectPropertyElementMain)
